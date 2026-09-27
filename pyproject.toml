@@ -1,11 +1,37 @@
-# Deliberately minimal.
+[project]
+name = "bobpulse"
+version = "3.0.0"
+description = "Legacy code scanner and automated remediation that verifies its own output"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+
+# Kept in sync with requirements.txt.
 #
-# Only [tool.vercel] is declared. Adding a [project] table would make Vercel
-# treat this as an installable package and resolve dependencies from here
-# instead of requirements.txt, which is where they are maintained.
-#
-# The entrypoint has to be explicit because tests/test_api.py also constructs a
-# FastAPI app (via TestClient), so autodetection finds two candidates.
+# Note on pytest: it is a *runtime* dependency, not just a test one. The
+# verification sandbox shells out to `python -m pytest` to execute the generated
+# regression harness. Without it installed, verification degrades to
+# "harness not executed" instead of running.
+dependencies = [
+    "fastapi>=0.110,<1.0",
+    "uvicorn>=0.28,<1.0",
+    "pydantic>=2.6,<3.0",
+    "python-dotenv>=1.0,<2.0",
+    "pytest>=8.0,<9.0",
+]
+
+[project.optional-dependencies]
+# Model-driven synthesis. Left optional because it pulls a large dependency tree
+# and BobPulse runs fully without it using the deterministic transformer.
+watsonx = ["ibm-watsonx-ai>=1.0,<2.0"]
+# Test-only additions (fastapi.testclient needs httpx).
+dev = ["httpx>=0.27,<1.0"]
+
+[tool.uv]
+# This is an application, not a distributable library: install the dependencies
+# above but do not try to build the repository itself as a package.
+package = false
 
 [tool.vercel]
+# Explicit because autodetection finds two candidates — tests/test_api.py also
+# constructs a FastAPI app.
 entrypoint = "backend.app:app"
