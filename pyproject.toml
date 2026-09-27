@@ -1,0 +1,11 @@
+# Deliberately minimal.
+#
+# Only [tool.vercel] is declared. Adding a [project] table would make Vercel
+# treat this as an installable package and resolve dependencies from here
+# instead of requirements.txt, which is where they are maintained.
+#
+# The entrypoint has to be explicit because tests/test_api.py also constructs a
+# FastAPI app (via TestClient), so autodetection finds two candidates.
+
+[tool.vercel]
+entrypoint = "backend.app:app"

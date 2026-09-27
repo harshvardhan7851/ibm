@@ -46,8 +46,8 @@ with `modernization_applied: false`. It will not emit code it could not validate
 Requires Python 3.10+ (tested on 3.13).
 
 ```bash
-git clone https://github.com/MANGAJJAR/IBM-Hackathon.git
-cd IBM-Hackathon
+git clone https://github.com/harshvardhan7851/ibm.git
+cd ibm
 pip install -r requirements.txt
 python run.py
 ```
