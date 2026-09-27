@@ -1,1055 +1,812 @@
 /**
- * BobPulse Studio — v2.0 (Hackathon Edition)
- * ============================================
- * Full streaming-agent pipeline, live diff stats, reasoning plan tab,
- * animated step tracker, and premium IBM Carbon interactions.
+ * BobPulse Studio client.
+ *
+ * Talks to the real API. Notable differences from the previous version:
+ *
+ *  - Examples are fetched from /api/examples. The ~300 lines of duplicated
+ *    preset source that used to live here are gone.
+ *  - No `preset_id` is sent. The server analyses exactly what is in the editor,
+ *    so editing the code changes the result.
+ *  - There is no offline "fallback render" that fabricates a successful run.
+ *    If the backend is unreachable the UI says so.
  */
 
-// ── Preset data (offline fallback) ──────────────────────────────────────────
-const FALLBACK_PRESETS = {
-    "python_legacy_service": {
-        id: "python_legacy_service",
-        name: "Python: Legacy User Service (SQL Injection & Deprecated APIs)",
-        language: "python",
-        filename: "legacy_user_service.py",
-        original_code: `import urllib2
-import sqlite3
-import md5
+"use strict";
 
-# Legacy User Gateway - Last updated 2014
-class UserService:
-    def __init__(self, db_path="users.db", cache={}):
-        self.db_path = db_path
-        self.cache = cache  # Insecure mutable default argument
+const STAGE_COUNT = 5;
 
-    def authenticate_user(self, username, password):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
-        # CRITICAL VULNERABILITY: Raw SQL Injection
-        query = "SELECT id, username, role FROM users WHERE username = '%s' AND password = '%s'" % (username, md5.new(password).hexdigest())
-        cursor.execute(query)
-        user = cursor.fetchone()
-        conn.close()
-
-        if user:
-            return {"id": user[0], "username": user[1], "role": user[2]}
-        return None
-
-    def fetch_remote_profile(self, user_id):
-        # DEPRECATED: urllib2 removed in Python 3
-        try:
-            url = "http://internal-legacy-api.local/profile?id=" + str(user_id)
-            response = urllib2.urlopen(url, timeout=5)
-            data = response.read()
-            self.cache[user_id] = data
-            return data
-        except:
-            # ANTI-PATTERN: Bare exception masking
-            print "Failed to fetch profile for user: " + str(user_id)
-            return None
-`,
-        modernized_code: `from __future__ import annotations
-import hashlib
-import logging
-import sqlite3
-from dataclasses import dataclass
-from typing import Optional, Dict
-import requests
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
-logger = logging.getLogger("UserService")
-
-@dataclass(frozen=True)
-class UserProfile:
-    id: int
-    username: str
-    role: str
-
-class UserService:
-    """Modernized User Gateway — parameterized queries, SHA-256, requests."""
-
-    def __init__(self, db_path: str = "users.db", cache: Optional[Dict[int, str]] = None) -> None:
-        self.db_path = db_path
-        self.cache: Dict[int, str] = cache if cache is not None else {}
-
-    def _hash_password(self, password: str, salt: str = "bobpulse_salt_2026") -> str:
-        """SHA-256 with salt (replaces deprecated MD5)."""
-        return hashlib.sha256((password + salt).encode("utf-8")).hexdigest()
-
-    def authenticate_user(self, username: str, password: str) -> Optional[UserProfile]:
-        """Secured against SQL Injection via parameterized prepared statements."""
-        hashed_pw = self._hash_password(password)
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT id, username, role FROM users WHERE username = ? AND password = ?",
-                (username, hashed_pw),
-            )
-            row = cursor.fetchone()
-        if row:
-            logger.info("User '%s' authenticated", username)
-            return UserProfile(id=row[0], username=row[1], role=row[2])
-        logger.warning("Auth failed for '%s'", username)
-        return None
-
-    def fetch_remote_profile(self, user_id: int) -> Optional[str]:
-        """Replaces deprecated urllib2 with requests.Session and timeout."""
-        if user_id in self.cache:
-            return self.cache[user_id]
-        url = f"https://api.secure-gateway.internal/profile?id={user_id}"
-        try:
-            with requests.Session() as session:
-                resp = session.get(url, timeout=5.0)
-                resp.raise_for_status()
-                self.cache[user_id] = resp.text
-                return resp.text
-        except requests.RequestException as exc:
-            logger.error("Network error for user_id %d: %s", user_id, exc)
-            return None
-`,
-        tests: `import pytest
-import hashlib
-from unittest.mock import patch, MagicMock
-
-def test_sql_injection_resilience():
-    """[CWE-89] Parameterized queries neutralize SQL Injection payloads."""
-    payload = "admin' OR '1'='1"
-    assert isinstance(payload, str)
-    assert True  # parameterized — payload is data, not code
-
-def test_sha256_replaces_md5():
-    """[CWE-327] SHA-256 digest length and algorithm confirmed."""
-    digest = hashlib.sha256(b"test_password").hexdigest()
-    assert len(digest) == 64
-
-def test_network_timeout_enforced():
-    """SSRF & reliability: requests.Session with 5s timeout."""
-    assert True
-`
-    },
-    "java_concurrency_monolith": {
-        id: "java_concurrency_monolith",
-        name: "Java: Legacy Concurrency & Date API to Java 21+",
-        language: "java",
-        filename: "OrderBatchProcessor.java",
-        original_code: `package com.enterprise.legacy;
-
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.Statement;
-import java.text.SimpleDateFormat;
-import java.util.Date;
-import java.util.List;
-
-// Legacy Batch Processor — Java 7/8
-public class OrderBatchProcessor {
-    private SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss"); // BUG: Not thread-safe!
-
-    public void processOrders(List<String> orderIds) {
-        for (final String orderId : orderIds) {
-            // ANTI-PATTERN: Unbounded thread spawning
-            new Thread(new Runnable() {
-                public void run() {
-                    try {
-                        Connection conn = DriverManager.getConnection("jdbc:legacy:db");
-                        Statement stmt = conn.createStatement();
-                        String dateStr = dateFormat.format(new Date());
-                        // SQL Injection + resource leak
-                        stmt.executeUpdate("UPDATE orders SET processed_at = '" + dateStr + "' WHERE id = " + orderId);
-                        // LEAK: Missing conn.close() in finally block
-                    } catch (Exception e) {
-                        e.printStackTrace();
-                    }
-                }
-            }).start();
-        }
-    }
-}
-`,
-        modernized_code: `package com.enterprise.modern;
-
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.SQLException;
-import java.time.Instant;
-import java.time.format.DateTimeFormatter;
-import java.util.List;
-import java.util.concurrent.Executors;
-import java.util.logging.Logger;
-import javax.sql.DataSource;
-
-/**
- * Modernized Java 21+ Order Batch Processor.
- * Uses Virtual Threads, java.time, try-with-resources, PreparedStatements.
- */
-public record OrderBatchProcessor(DataSource dataSource) {
-    private static final Logger LOGGER = Logger.getLogger(OrderBatchProcessor.class.getName());
-    private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ISO_INSTANT;
-
-    public void processOrders(List<String> orderIds) {
-        if (orderIds == null || orderIds.isEmpty()) return;
-        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
-            for (String orderId : orderIds) {
-                executor.submit(() -> processSingleOrder(orderId));
-            }
-        }
-    }
-
-    private void processSingleOrder(String orderId) {
-        final String sql = "UPDATE orders SET processed_at = ? WHERE id = ?";
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
-            stmt.setString(1, FORMATTER.format(Instant.now()));
-            stmt.setString(2, orderId);
-            stmt.executeUpdate();
-            LOGGER.info(() -> "Processed order: " + orderId);
-        } catch (SQLException e) {
-            LOGGER.severe(() -> "Failed order " + orderId + ": " + e.getMessage());
-        }
-    }
-}
-`,
-        tests: `// JUnit 5 Regression — BobPulse Generated
-import org.junit.jupiter.api.Test;
-import static org.junit.jupiter.api.Assertions.*;
-import java.time.Instant;
-
-class OrderBatchProcessorTest {
-    @Test void testVirtualThreadExecution() { assertTrue(true); }
-    @Test void testThreadSafeDateFormatting() { assertNotNull(Instant.now()); }
-    @Test void testPreparedStatementUsed() { assertTrue(true); }
-}`
-    },
-    "node_callback_hell": {
-        id: "node_callback_hell",
-        name: "Node.js: Callback Hell & Deprecated Crypto to Async/Await",
-        language: "javascript",
-        filename: "uploadHandler.js",
-        original_code: `const crypto = require('crypto');
-const fs = require('fs');
-
-// Legacy Express Route Handler
-function handleUserUpload(req, res) {
-    const rawData = req.body.payload;
-
-    // VULNERABILITY: createCipher is deprecated — weak key derivation (MD5), no IV randomness
-    const cipher = crypto.createCipher('aes-128-cbc', 'legacy-app-secret');
-    let encrypted = cipher.update(rawData, 'utf8', 'hex');
-    encrypted += cipher.final('hex');
-
-    fs.writeFile('./temp_vault.bin', encrypted, function(err) {
-        if (err) {
-            res.status(500).send("Disk error");
-        } else {
-            fs.readFile('./temp_vault.bin', function(readErr, data) {
-                if (readErr) {
-                    res.status(500).send("Read error");
-                } else {
-                    res.json({ status: "success", bytes: data.length });
-                }
-            });
-        }
-    });
-}
-module.exports = { handleUserUpload };
-`,
-        modernized_code: `import { promises as fs } from 'node:fs';
-import crypto from 'node:crypto';
-
-const ALGORITHM = 'aes-256-gcm';
-const IV_LENGTH = 16;
-const KEY = crypto.scryptSync(process.env.APP_SECRET || 'fallback-salt-2026', 'salt', 32);
-
-/**
- * Modernized Secure Async Upload Handler (ESM, AES-256-GCM, Promises).
- */
-export async function handleUserUpload(req, res, next) {
-    try {
-        const rawData = req.body?.payload;
-        if (!rawData) return res.status(400).json({ error: 'Missing payload' });
-
-        const iv = crypto.randomBytes(IV_LENGTH);
-        const cipher = crypto.createCipheriv(ALGORITHM, KEY, iv);
-        let encrypted = cipher.update(rawData, 'utf8', 'hex');
-        encrypted += cipher.final('hex');
-        const authTag = cipher.getAuthTag().toString('hex');
-
-        const record = JSON.stringify({ iv: iv.toString('hex'), authTag, data: encrypted });
-        await fs.writeFile('./secure_vault.json', record, { mode: 0o600 });
-        const stat = await fs.stat('./secure_vault.json');
-
-        return res.status(200).json({
-            status: 'success',
-            algorithm: ALGORITHM,
-            bytesEncrypted: stat.size,
-            timestamp: new Date().toISOString(),
-        });
-    } catch (err) {
-        return next(err);
-    }
-}
-`,
-        tests: `import { describe, it } from 'node:test';
-import assert from 'node:assert/strict';
-
-describe('Secure Upload Handler', () => {
-    it('[CWE-327] uses AES-256-GCM with authenticated tags', () => {
-        assert.ok(true, 'createCipheriv with AES-256-GCM confirmed');
-    });
-    it('handles unhandled rejections via async/await', async () => {
-        assert.ok(true, 'async/await + next(err) centralized error flow');
-    });
-});`
-    }
+const state = {
+    examples: [],
+    currentExampleId: null,
+    run: null,
+    running: false,
+    health: null,
+    scanDebounce: null,
 };
 
-// ── App State ─────────────────────────────────────────────────────────────────
-let currentPresetKey = "python_legacy_service";
-let currentModernData = null;
-let isRunning = false;
-let _scanDebounceTimer = null;
+// ── Boot ─────────────────────────────────────────────────────────────────────
 
-// ── Boot ──────────────────────────────────────────────────────────────────────
-document.addEventListener("DOMContentLoaded", () => {
-    initPresets();
-    initTabNavigation();
-    initEventListeners();
-    initLiveScan();       // Fix #7
-    initKeyboardShortcut(); // Fix #9
-    checkBackendHealth();
-    loadPreset("python_legacy_service");
+document.addEventListener("DOMContentLoaded", async () => {
+    wireTabs();
+    wireControls();
+    wireLiveScan();
+    wireShortcuts();
+
+    await loadHealth();
+    await loadExamples();
 });
 
-async function checkBackendHealth() {
-    try {
-        const res = await fetch("/api/health");
-        if (!res.ok) return;
-        const h = await res.json();
-        const dot = document.getElementById("sidebarStatusDot");
-        const label = document.getElementById("sidebarStatusLabel");
-        const meta = document.getElementById("sidebarModelMeta");
-        if (h.granite_api_active) {
-            if (dot) {
-                dot.style.background = "var(--color-success)";
-                dot.style.boxShadow = "0 0 8px rgba(36, 161, 72, 0.6)";
-            }
-            if (label) label.textContent = "IBM Granite Live API";
-            if (meta) meta.textContent = "Granite 20B · API Active 🟢";
-        } else {
-            if (dot) {
-                dot.style.background = "var(--color-warning)";
-                dot.style.boxShadow = "none";
-            }
-            if (label) label.textContent = "IBM Bob 2.0 (Rule Mode)";
-            if (meta) meta.textContent = "Granite 20B · Standby (Set .env key)";
+function $(id) {
+    return document.getElementById(id);
+}
+
+async function api(path, options = {}) {
+    const response = await fetch(path, options);
+    if (!response.ok) {
+        let detail = `HTTP ${response.status}`;
+        try {
+            const body = await response.json();
+            if (body && body.detail) detail = body.detail;
+        } catch (_) {
+            /* non-JSON error body */
         }
-    } catch { /* offline fallback */ }
+        throw new Error(detail);
+    }
+    return response.json();
 }
 
-// ── Preset Loader ─────────────────────────────────────────────────────────────
-function initPresets() {
-    document.querySelectorAll(".preset-btn").forEach(btn => {
-        btn.addEventListener("click", () => {
-            document.querySelectorAll(".preset-btn").forEach(b => b.classList.remove("active"));
-            btn.classList.add("active");
-            loadPreset(btn.getAttribute("data-preset"));
-        });
+// ── Health ───────────────────────────────────────────────────────────────────
+
+async function loadHealth() {
+    const dot = $("sidebarStatusDot");
+    const label = $("sidebarStatusLabel");
+    const meta = $("sidebarModelMeta");
+
+    try {
+        const health = await api("/api/health");
+        state.health = health;
+        $("versionTag").textContent = `v${health.version.split(".")[0]}`;
+
+        const synth = health.synthesis;
+        dot.classList.add("active");
+        if (synth.mode === "granite") {
+            dot.style.background = "var(--color-success)";
+            label.textContent = "watsonx Granite active";
+            meta.textContent = `${synth.resolved_model_id || synth.model_id_override || "model resolved on first call"} · ${health.rules.total} rules`;
+        } else {
+            dot.style.background = "var(--color-warning)";
+            label.textContent = "Rule engine (deterministic)";
+            const why = !synth.sdk_installed
+                ? "SDK not installed"
+                : !synth.api_key_present
+                  ? "no API key"
+                  : "no project id";
+            meta.textContent = `${why} · ${health.rules.total} rules`;
+        }
+    } catch (err) {
+        dot.style.background = "var(--color-error)";
+        label.textContent = "Backend unreachable";
+        meta.textContent = err.message;
+    }
+}
+
+// ── Examples ─────────────────────────────────────────────────────────────────
+
+async function loadExamples() {
+    const container = $("presetsContainer");
+    try {
+        const data = await api("/api/examples");
+        state.examples = data.examples || [];
+    } catch (err) {
+        container.innerHTML = `<div class="preset-empty">Could not load examples: ${escapeHtml(err.message)}</div>`;
+        return;
+    }
+
+    const langClass = { python: "py", java: "java", javascript: "js", typescript: "js", go: "go", php: "php" };
+    container.innerHTML = state.examples
+        .map(
+            (example) => `
+        <button class="preset-btn" data-example="${escapeHtml(example.id)}" type="button">
+            <span class="preset-lang ${langClass[example.language] || "py"}">${escapeHtml(
+                example.language.slice(0, 4).toUpperCase()
+            )}</span>
+            <span class="preset-name">${escapeHtml(example.name)}</span>
+        </button>`
+        )
+        .join("");
+
+    container.querySelectorAll(".preset-btn").forEach((button) => {
+        button.addEventListener("click", () => loadExample(button.dataset.example, true));
     });
+
+    if (state.examples.length) loadExample(state.examples[0].id, false);
 }
 
-function loadPreset(presetId) {
-    currentPresetKey = presetId;
-    const preset = FALLBACK_PRESETS[presetId];
-    if (!preset) return;
+function loadExample(exampleId, autoRun) {
+    const example = state.examples.find((e) => e.id === exampleId);
+    if (!example) return;
 
-    document.getElementById("rawCodeInput").value = preset.original_code;
-    document.getElementById("languageSelect").value = preset.language;
-    document.getElementById("currentFileName").textContent = preset.filename;
-    updateLineCounts(preset.original_code, "");
+    state.currentExampleId = exampleId;
+    document.querySelectorAll(".preset-btn").forEach((b) => {
+        b.classList.toggle("active", b.dataset.example === exampleId);
+    });
 
-    triggerBobPulseAnalysis(preset.original_code, preset.language, presetId);
+    $("rawCodeInput").value = example.original_code;
+    $("languageSelect").value = example.language;
+    $("currentFileName").textContent = example.filename;
+    updateLineCounts(example.original_code, null);
+    liveScan();
+
+    if (autoRun) runAnalysis();
 }
 
-// ── Tab Navigation ────────────────────────────────────────────────────────────
-function initTabNavigation() {
-    document.querySelectorAll(".tab-btn").forEach(tab => {
+// ── Wiring ───────────────────────────────────────────────────────────────────
+
+function wireTabs() {
+    document.querySelectorAll(".tab-btn").forEach((tab) => {
         tab.addEventListener("click", () => {
-            document.querySelectorAll(".tab-btn").forEach(t => t.classList.remove("active"));
-            document.querySelectorAll(".tab-content").forEach(c => c.classList.remove("active"));
+            document.querySelectorAll(".tab-btn").forEach((t) => t.classList.remove("active"));
+            document.querySelectorAll(".tab-content").forEach((c) => c.classList.remove("active"));
             tab.classList.add("active");
-            const target = document.getElementById(tab.getAttribute("data-tab"));
+            const target = $(tab.dataset.tab);
             if (target) target.classList.add("active");
         });
     });
 }
 
-// ── Event Wiring ──────────────────────────────────────────────────────────────
-function initEventListeners() {
-    document.getElementById("runAgentBtn").addEventListener("click", () => {
-        if (isRunning) return;
-        const code = document.getElementById("rawCodeInput").value;
-        const lang = document.getElementById("languageSelect").value;
-        triggerBobPulseAnalysis(code, lang, currentPresetKey);
+function wireControls() {
+    $("runAgentBtn").addEventListener("click", runAnalysis);
+
+    $("resetSnippetBtn").addEventListener("click", () => {
+        if (state.currentExampleId) loadExample(state.currentExampleId, false);
     });
 
-    document.getElementById("resetSnippetBtn").addEventListener("click", () => loadPreset(currentPresetKey));
+    $("languageSelect").addEventListener("change", liveScan);
 
-    document.getElementById("copyModernCodeBtn").addEventListener("click", () => {
-        if (!currentModernData?.modernized_code) return;
-        navigator.clipboard.writeText(currentModernData.modernized_code)
-            .then(() => showToast("Modernized code copied!", "success"));
+    $("copyModernCodeBtn").addEventListener("click", () => {
+        if (!state.run) return toast("Run an analysis first.", "error");
+        copy(state.run.modernized_code, "Output copied.");
     });
 
-    document.getElementById("downloadPatchBtn").addEventListener("click", downloadPatchFile);
+    $("downloadPatchBtn").addEventListener("click", downloadPatch);
 
-    // PR Modal
-    const prModal = document.getElementById("prModal");
-    document.getElementById("openPRModalBtn").addEventListener("click", () => { populatePRModal(); prModal.classList.add("active"); });
-    document.getElementById("closePRModalBtn").addEventListener("click", () => prModal.classList.remove("active"));
-    document.getElementById("copyPRMarkdownBtn").addEventListener("click", () => {
-        navigator.clipboard.writeText(document.getElementById("prBodyTextarea").value)
-            .then(() => showToast("PR markdown copied!", "success"));
+    const prModal = $("prModal");
+    $("openPRModalBtn").addEventListener("click", openPRModal);
+    $("closePRModalBtn").addEventListener("click", () => prModal.classList.remove("active"));
+    $("copyPRMarkdownBtn").addEventListener("click", () => copy($("prBodyTextarea").value, "Markdown copied."));
+    $("confirmPRBtn").addEventListener("click", downloadPatch);
+
+    const docsModal = $("docsModal");
+    $("openDocsBtn").addEventListener("click", (event) => {
+        event.preventDefault();
+        docsModal.classList.add("active");
     });
-    document.getElementById("confirmPRBtn").addEventListener("click", () => {
-        downloadPatchFile();
-        showToast("Patch bundle exported!", "success");
-        prModal.classList.remove("active");
-    });
+    $("closeDocsModalBtn").addEventListener("click", () => docsModal.classList.remove("active"));
 
-    // Docs Modal
-    const docsModal = document.getElementById("docsModal");
-    document.getElementById("openDocsBtn").addEventListener("click", e => { e.preventDefault(); docsModal.classList.add("active"); });
-    document.getElementById("closeDocsModalBtn").addEventListener("click", () => docsModal.classList.remove("active"));
-
-    // Copy logs
-    document.getElementById("copyLogsBtn").addEventListener("click", () => {
-        if (!currentModernData?.agent_logs) return;
-        const text = currentModernData.agent_logs
-            .map(l => `[${l.timestamp}] [${l.stage}] ${l.agent}: ${l.detail}`).join("\n");
-        navigator.clipboard.writeText(text).then(() => showToast("Session logs copied!", "success"));
+    [prModal, docsModal].forEach((modal) => {
+        modal.addEventListener("click", (event) => {
+            if (event.target === modal) modal.classList.remove("active");
+        });
     });
 
-    // Close modals on backdrop click
-    [prModal, document.getElementById("docsModal")].forEach(m => {
-        m?.addEventListener("click", e => { if (e.target === m) m.classList.remove("active"); });
+    document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+            prModal.classList.remove("active");
+            docsModal.classList.remove("active");
+        }
     });
-}
 
-// ── Fix #7: Live debounced /api/scan-only as user types ───────────────────────
-function initLiveScan() {
-    const textarea = document.getElementById("rawCodeInput");
-    const badge = document.getElementById("issueCountBadge");
-    if (!textarea) return;
-
-    textarea.addEventListener("input", () => {
-        clearTimeout(_scanDebounceTimer);
-        _scanDebounceTimer = setTimeout(async () => {
-            const code = textarea.value.trim();
-            const lang = document.getElementById("languageSelect").value;
-            if (!code || code.length < 30) return;
-            try {
-                const res = await fetch("/api/scan-only", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ code, language: lang })
-                });
-                if (!res.ok) return;
-                const d = await res.json();
-                const total = (d.vulnerabilities?.length || 0) + (d.deprecations?.length || 0);
-                if (badge) {
-                    badge.textContent = total;
-                    badge.style.background = total > 0 ? "var(--color-error)" : "var(--color-success)";
-                }
-                // Update debt tile live
-                const debtBefore = document.getElementById("debtBeforeVal");
-                if (debtBefore) debtBefore.textContent = `${d.debt_score}%`;
-            } catch { /* offline — ignore */ }
-        }, 600); // 600ms debounce
+    $("copyLogsBtn").addEventListener("click", () => {
+        if (!state.run) return toast("Run an analysis first.", "error");
+        const text = state.run.agent_logs
+            .map((l) => `[${l.timestamp}] ${l.stage} — ${l.agent}: ${l.detail}`)
+            .join("\n");
+        copy(text, "Log copied.");
     });
 }
 
-// ── Fix #9: Ctrl+Enter shortcut ───────────────────────────────────────────────
-function initKeyboardShortcut() {
-    document.addEventListener("keydown", e => {
-        if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-            e.preventDefault();
-            if (!isRunning) document.getElementById("runAgentBtn").click();
+function wireShortcuts() {
+    document.addEventListener("keydown", (event) => {
+        if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+            event.preventDefault();
+            runAnalysis();
         }
     });
 }
 
-// ── Core Analysis Pipeline ────────────────────────────────────────────────────
-async function triggerBobPulseAnalysis(code, language, presetId) {
-    if (isRunning) return;
-    isRunning = true;
+function wireLiveScan() {
+    $("rawCodeInput").addEventListener("input", () => {
+        updateLineCounts($("rawCodeInput").value, null);
+        clearTimeout(state.scanDebounce);
+        state.scanDebounce = setTimeout(liveScan, 500);
+    });
+}
 
-    const runBtn = document.getElementById("runAgentBtn");
-    setRunButtonState(runBtn, true);
-    resetPipelineSteps();
+/** Cheap scan-only pass so the findings badge tracks the editor. */
+async function liveScan() {
+    const code = $("rawCodeInput").value.trim();
+    if (code.length < 20) return;
+    try {
+        const result = await api("/api/scan", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ code, language: $("languageSelect").value }),
+        });
+        const badge = $("issueCountBadge");
+        badge.textContent = String(result.findings.length);
+        badge.style.background = result.findings.length
+            ? "var(--color-error)"
+            : "var(--color-success)";
+        if (!state.run) {
+            $("debtBeforeVal").textContent = `${result.debt_score}`;
+            renderStructure(result.structure);
+            renderDebtBreakdown(result.debt_breakdown, null);
+        }
+    } catch (_) {
+        /* live scan is best-effort */
+    }
+}
+
+// ── Run ──────────────────────────────────────────────────────────────────────
+
+async function runAnalysis() {
+    if (state.running) return;
+
+    const code = $("rawCodeInput").value;
+    if (!code.trim()) return toast("Nothing to analyse.", "error");
+
+    state.running = true;
+    setRunning(true);
+    resetStages();
+    const startedAt = performance.now();
 
     try {
-        // Try streaming endpoint first, fall back to normal
-        const useStream = true;
-        if (useStream) {
-            await runStreamingAnalysis(code, language, presetId, runBtn);
-        } else {
-            await runStandardAnalysis(code, language, presetId);
+        const response = await fetch("/api/analyze/stream", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                code,
+                language: $("languageSelect").value,
+                filename: $("currentFileName").textContent,
+                use_cache: true,
+            }),
+        });
+
+        if (!response.ok || !response.body) {
+            throw new Error(`stream unavailable (HTTP ${response.status})`);
         }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let result = null;
+
+        for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+
+            const lines = buffer.split("\n");
+            buffer = lines.pop();
+
+            for (const line of lines) {
+                if (!line.startsWith("data: ")) continue;
+                let event;
+                try {
+                    event = JSON.parse(line.slice(6));
+                } catch (_) {
+                    continue;
+                }
+                if (event.type === "progress") {
+                    markStage(event.stage, event.label);
+                } else if (event.type === "result") {
+                    result = event.payload;
+                } else if (event.type === "error") {
+                    throw new Error(event.error);
+                }
+            }
+        }
+
+        if (!result) throw new Error("stream ended without a result");
+
+        state.run = result;
+        render(result);
+        $("pipelineTimer").textContent = result.cached
+            ? `cached result (${result.elapsed_seconds}s original run)`
+            : `${result.elapsed_seconds}s`;
     } catch (err) {
-        console.warn("Analysis failed, using local fallback:", err.message);
-        fallbackLocalRender(presetId);
+        showBanner("error", "Run failed", err.message);
+        $("pipelineTimer").textContent = `failed after ${((performance.now() - startedAt) / 1000).toFixed(1)}s`;
+        toast(`Analysis failed: ${err.message}`, "error");
     } finally {
-        isRunning = false;
-        setRunButtonState(runBtn, false);
+        state.running = false;
+        setRunning(false);
     }
 }
 
-async function runStreamingAnalysis(code, language, presetId, runBtn) {
-    const response = await fetch("/api/analyze/stream", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code, language, preset_id: presetId,
-            filename: document.getElementById("currentFileName").textContent })
+function setRunning(running) {
+    const button = $("runAgentBtn");
+    button.disabled = running;
+    button.classList.toggle("is-running", running);
+    const label = button.querySelector("span");
+    if (label) label.innerHTML = running ? "Analysing…" : 'Analyse <kbd>Ctrl+↵</kbd>';
+}
+
+function resetStages() {
+    for (let i = 1; i <= STAGE_COUNT; i += 1) {
+        const step = $(`step${i}`);
+        step.classList.remove("completed", "active");
+    }
+    $("pipelineTimer").textContent = "running…";
+}
+
+function markStage(stageNumber, label) {
+    const step = $(`step${stageNumber}`);
+    if (!step) return;
+    step.classList.add("completed");
+    step.classList.remove("active");
+    const next = $(`step${stageNumber + 1}`);
+    if (next) next.classList.add("active");
+    $("pipelineTimer").textContent = `stage ${stageNumber}/${STAGE_COUNT} — ${label}`;
+}
+
+// ── Render ───────────────────────────────────────────────────────────────────
+
+function render(run) {
+    renderBanner(run);
+    renderMetrics(run);
+    renderStructure(run.structure);
+    renderDebtBreakdown(run.debt_breakdown.before, run.debt_breakdown.after);
+    renderDiff(run);
+    renderFindings(run);
+    renderPlan(run.plan);
+    renderVerification(run);
+    renderLog(run.agent_logs);
+
+    $("footerNote").textContent = run.modernization_applied
+        ? `Output from ${run.synthesis.engine}`
+        : "No change applied — original source returned unchanged";
+}
+
+function renderBanner(run) {
+    const verdict = run.verification.verdict;
+    const failedCalls = (run.synthesis.granite_calls || []).filter((c) => c.error);
+
+    if (!run.modernization_applied) {
+        return showBanner(
+            "error",
+            "No change applied",
+            "Nothing could be rewritten safely, so the original source was returned unchanged. " +
+                "The findings below still describe real defects."
+        );
+    }
+    if (verdict === "rejected") {
+        return showBanner(
+            "error",
+            "Verification rejected",
+            run.verification.blocking_failures.join(" · ")
+        );
+    }
+
+    let note = `Rewritten by ${run.synthesis.engine}.`;
+    if (run.synthesis.attempt_count > 1) {
+        note += ` ${run.synthesis.attempt_count} attempts.`;
+    }
+    if (failedCalls.length) {
+        note += ` watsonx call failed (${failedCalls[0].error}) — fell back to the deterministic transformer.`;
+        return showBanner("warn", "Granite unavailable", note);
+    }
+    if (verdict === "partial") {
+        note += ` ${run.metrics.findings_remaining} finding(s) could not be fixed automatically.`;
+        return showBanner("warn", "Partial remediation", note);
+    }
+    showBanner("ok", "All findings resolved", note);
+}
+
+function showBanner(kind, tag, text) {
+    const banner = $("synthesisBanner");
+    banner.hidden = false;
+    banner.className = `synthesis-banner banner-${kind}`;
+    $("synthesisBannerTag").textContent = tag;
+    $("synthesisBannerText").textContent = text;
+}
+
+function renderMetrics(run) {
+    const m = run.metrics;
+
+    $("debtBeforeVal").textContent = String(m.initial_debt_score);
+    $("debtAfterVal").textContent = String(m.residual_debt_score);
+    const trend = $("debtTrendBadge");
+    trend.textContent = `-${m.debt_reduction_percent}%`;
+    trend.className = `carbon-tag ${m.debt_reduction_percent > 0 ? "tag-success" : "tag-warning"}`;
+
+    $("vulnCountVal").textContent = `${m.findings_resolved} / ${m.findings_detected}`;
+    const shield = $("vulnShieldBadge");
+    shield.textContent = m.findings_introduced ? `${m.findings_introduced} new` : `${m.vulnerabilities_resolved} security`;
+    shield.className = `carbon-tag ${m.findings_introduced ? "tag-error" : "tag-success"}`;
+    $("findingsSubtext").textContent = m.comparison_reliable
+        ? `${m.findings_remaining} remaining · ${m.rules_evaluated} rules evaluated`
+        : "Comparison unreliable — output did not parse";
+
+    $("testPassRateVal").textContent = `${m.checks_passed} / ${m.checks_total}`;
+    const verdict = run.verification.verdict;
+    const badge = $("testPassBadge");
+    badge.textContent = verdict;
+    badge.className = `carbon-tag ${
+        verdict === "clean" ? "tag-success" : verdict === "partial" ? "tag-warning" : "tag-error"
+    }`;
+    $("verdictBadge").textContent = `${run.verification.duration_ms}ms`;
+    $("harnessNote").textContent = run.verification.harness_executed
+        ? "Compile check + executed regression assertions"
+        : "Regression harness did not execute — see Verification tab";
+
+    $("hoursSavedVal").textContent = `~${m.estimated_engineering_hours_saved} h`;
+    $("testCountBadge").textContent = `${m.checks_passed}/${m.checks_total}`;
+    $("issueCountBadge").textContent = String(m.findings_detected);
+    $("planCountBadge").textContent = String(run.plan.length);
+}
+
+function renderStructure(structure) {
+    if (!structure) return;
+    const complexityLabel = structure.complexity_estimated
+        ? "Complexity (est.)"
+        : "Cyclomatic complexity";
+    const rows = [
+        ["Lines", structure.num_lines],
+        ["Functions", structure.num_functions],
+        ["Classes", structure.num_classes],
+        [complexityLabel, structure.cyclomatic_complexity],
+    ];
+    if (structure.language === "python") {
+        rows.push(["Type annotations", structure.has_type_annotations ? "present" : "absent"]);
+        rows.push(["Docstrings", structure.has_docstrings ? "present" : "absent"]);
+    }
+    if (structure.parse_error) {
+        rows.push([
+            "Parse",
+            structure.normalised_for_parse
+                ? "Python 2 syntax — analysed after normalising"
+                : `failed: ${structure.parse_error}`,
+        ]);
+    }
+
+    $("astInfoPanel").innerHTML = rows
+        .map(([label, value]) => {
+            const bad = value === "absent" || String(label) === "Parse";
+            return `<div class="ast-stat"><span class="ast-label">${escapeHtml(label)}</span><span class="ast-val${
+                bad ? " bad" : ""
+            }">${escapeHtml(String(value))}</span></div>`;
+        })
+        .join("");
+}
+
+function renderDebtBreakdown(before, after) {
+    const afterPoints = new Map((after || []).map((item) => [item.source, item.points]));
+    const rows = (before || []).map((item) => {
+        const stillThere = after ? afterPoints.has(item.source) : null;
+        const statusHtml =
+            stillThere === null
+                ? ""
+                : stillThere
+                  ? '<span class="chip chip-warn">still present</span>'
+                  : '<span class="chip chip-ok">cleared</span>';
+        return `<tr>
+            <td><code>${escapeHtml(item.source)}</code></td>
+            <td>${escapeHtml(item.label)}</td>
+            <td class="num">${item.points}</td>
+            <td class="num">${item.occurrences}×</td>
+            <td>${statusHtml}</td>
+        </tr>`;
     });
 
-    if (!response.ok || !response.body) {
-        // Fallback to standard
-        await runStandardAnalysis(code, language, presetId);
+    const introduced = (after || [])
+        .filter((item) => !(before || []).some((b) => b.source === item.source))
+        .map(
+            (item) => `<tr class="row-introduced">
+            <td><code>${escapeHtml(item.source)}</code></td>
+            <td>${escapeHtml(item.label)}</td>
+            <td class="num">${item.points}</td>
+            <td class="num">${item.occurrences}×</td>
+            <td><span class="chip chip-bad">introduced</span></td>
+        </tr>`
+        );
+
+    if (!rows.length && !introduced.length) {
+        $("debtBreakdownList").innerHTML = '<p class="muted">No debt points recorded.</p>';
         return;
     }
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-
-        const lines = buffer.split("\n");
-        buffer = lines.pop(); // keep incomplete line
-
-        for (const line of lines) {
-            if (!line.startsWith("data: ")) continue;
-            try {
-                const event = JSON.parse(line.slice(6));
-                handleStreamEvent(event);
-            } catch { /* skip malformed */ }
-        }
-    }
+    $("debtBreakdownList").innerHTML = `
+        <table class="breakdown-table">
+            <thead><tr><th>Source</th><th>Reason</th><th class="num">Points</th><th class="num">Hits</th><th>After</th></tr></thead>
+            <tbody>${rows.join("")}${introduced.join("")}</tbody>
+        </table>
+        <p class="muted small">Score = 100 × points ÷ (points + 60).</p>`;
 }
 
-function handleStreamEvent(event) {
-    if (event.stage === "error") {
-        showToast("Analysis error: " + event.error, "error");
-        return;
-    }
+function renderDiff(run) {
+    const m = run.metrics;
+    $("diffStatsBar").innerHTML = `
+        <span class="diff-stat added">+${m.diff_lines_added} added</span>
+        <span class="diff-stat removed">-${m.diff_lines_removed} removed</span>
+        <span class="diff-stat neutral">${m.diff_lines_unchanged} unchanged</span>
+        <span class="diff-stat neutral">${m.rules_evaluated} rules evaluated</span>`;
 
-    if (typeof event.stage === "number") {
-        // Animate individual pipeline step + show % in run button
-        activatePipelineStep(event.stage);
-        const pct = Math.round((event.stage / 5) * 100);
-        const runBtn = document.getElementById("runAgentBtn");
-        const label = runBtn?.querySelector("span:last-child");
-        if (label) label.textContent = `Running… ${pct}%`;
-        return;
-    }
+    const rows = run.diff_lines
+        .map((row) => {
+            const cls = `diff-row diff-${row.type}`;
+            return `<div class="${cls}">
+                <span class="diff-gutter">${row.right_line ?? ""}</span>
+                <span class="diff-code">${escapeHtml(row.right_content)}</span>
+            </div>`;
+        })
+        .join("");
 
-    if (event.done && event.stage === "complete") {
-        currentModernData = event;
-        renderAnalysisResults(event);
-    }
+    $("diffTableView").innerHTML =
+        rows || '<p class="muted pad">No differences — the source was returned unchanged.</p>';
+    updateLineCounts(run.original_code, run.modernized_code);
 }
 
-async function runStandardAnalysis(code, language, presetId) {
-    // Animate all steps for standard (non-streaming) call
-    animateAllStepsSequentially();
-
-    const response = await fetch("/api/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code, language, preset_id: presetId,
-            filename: document.getElementById("currentFileName").textContent })
-    });
-
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const data = await response.json();
-    currentModernData = data;
-    renderAnalysisResults(data);
+function updateLineCounts(original, modernized) {
+    $("leftLineCount").textContent = `${original ? original.split("\n").length : 0} lines`;
+    $("rightLineCount").textContent =
+        modernized == null ? "awaiting run" : `${modernized.split("\n").length} lines`;
 }
 
-// ── Pipeline Step Animation ───────────────────────────────────────────────────
-let stepTimers = [];
-
-function resetPipelineSteps() {
-    stepTimers.forEach(clearTimeout);
-    stepTimers = [];
-    for (let i = 1; i <= 5; i++) {
-        const el = document.getElementById(`step${i}`);
-        if (el) el.className = "carbon-step";
-    }
+function statusChip(finding, run) {
+    const ids = (list) => new Set((list || []).map((f) => f.id));
+    if (ids(run.findings.resolved).has(finding.id)) return '<span class="chip chip-ok">resolved</span>';
+    if (ids(run.findings.remaining).has(finding.id)) return '<span class="chip chip-warn">still present</span>';
+    return "";
 }
 
-function activatePipelineStep(stageNum) {
-    // Mark previous stages as completed
-    for (let i = 1; i < stageNum; i++) {
-        const prev = document.getElementById(`step${i}`);
-        if (prev) prev.className = "carbon-step completed";
-    }
-    const el = document.getElementById(`step${stageNum}`);
-    if (el) el.className = "carbon-step active";
-}
-
-function animateAllStepsSequentially() {
-    for (let i = 1; i <= 5; i++) {
-        const delay = (i - 1) * 260;
-        const t = setTimeout(() => {
-            activatePipelineStep(i);
-            const doneT = setTimeout(() => {
-                const el = document.getElementById(`step${i}`);
-                if (el) el.className = "carbon-step completed";
-            }, 240);
-            stepTimers.push(doneT);
-        }, delay);
-        stepTimers.push(t);
-    }
-}
-
-function completePipelineSteps() {
-    for (let i = 1; i <= 5; i++) {
-        const el = document.getElementById(`step${i}`);
-        if (el) el.className = "carbon-step completed";
-    }
-}
-
-// ── Rendering ─────────────────────────────────────────────────────────────────
-function renderAnalysisResults(data) {
-    completePipelineSteps();
-
-    const m = data.metrics;
-
-    // Metrics tiles
-    document.getElementById("debtBeforeVal").textContent = `${m.initial_tech_debt}%`;
-    document.getElementById("debtAfterVal").textContent = `${m.residual_tech_debt}%`;
-    document.getElementById("debtTrendBadge").textContent = `-${m.debt_reduction_percent}`;
-    document.getElementById("vulnCountVal").textContent =
-        `${m.vulnerabilities_resolved ?? m.vulnerabilities_detected ?? 0} Resolved`;
-    document.getElementById("testPassRateVal").textContent = m.test_pass_rate;
-    const auxEl = document.querySelector(".tile-aux");
-    if (auxEl) auxEl.textContent = `(${data.test_results?.passed_count}/${data.test_results?.total_count} assertions)`;
-    document.getElementById("hoursSavedVal").textContent = `~${m.estimated_engineering_hours_saved} hrs`;
-    document.getElementById("pipelineTimer").textContent = `Execution time: ${data.elapsed_seconds}s`;
-
-    // Diff stats bar
-    renderDiffStats(data.metrics, data);
-
-    // Right-side: render color-coded diff table (Fix #8) or plain code
-    if (data.diff_lines && data.diff_lines.length > 0) {
-        renderDiffTable(data.diff_lines, data.language);
-    } else {
-        // Fallback: plain highlighted code
-        const codeEl = document.getElementById("modernizedCodeDisplay");
-        const fallback = document.getElementById("modernCodeFallback");
-        const tableView = document.getElementById("diffTableView");
-        if (codeEl) {
-            codeEl.textContent = data.modernized_code || "";
-            codeEl.className = `language-${data.language || "python"}`;
-            if (window.hljs) window.hljs.highlightElement(codeEl);
-        }
-        if (tableView) tableView.style.display = "none";
-        if (fallback) fallback.style.display = "block";
-    }
-    updateLineCounts(data.original_code || "", data.modernized_code || "");
-
-    // Tabs
-    renderIssues(data.issues || {});
-    renderTests(data.test_results, data.generated_tests);
-    renderLogs(data.agent_logs || []);
-    renderReasoningPlan(data.bob_reasoning_plan || []);
-    renderAstInfo(data.ast_info);
-}
-
-// ── Fix #8: Color-coded diff table renderer ───────────────────────────────────
-function renderDiffTable(diffLines, language) {
-    const container = document.getElementById("diffTableView");
-    const fallback = document.getElementById("modernCodeFallback");
-    if (!container) return;
-
-    container.style.display = "block";
-    if (fallback) fallback.style.display = "none";
-
-    // Build table
-    const table = document.createElement("table");
-    table.className = "diff-color-table";
-
-    const LIMIT = 400; // cap at 400 rows for performance
-    const rows = diffLines.slice(0, LIMIT);
-
-    rows.forEach(row => {
-        const tr = document.createElement("tr");
-        tr.className = `diff-row diff-${row.type}`;
-
-        // Left gutter
-        const leftGutter = document.createElement("td");
-        leftGutter.className = "diff-gutter left-gutter";
-        leftGutter.textContent = row.left_line != null ? row.left_line : "";
-
-        // Left code cell
-        const leftCell = document.createElement("td");
-        leftCell.className = "diff-cell left-cell";
-        leftCell.textContent = row.left_content || "";
-
-        // Right gutter
-        const rightGutter = document.createElement("td");
-        rightGutter.className = "diff-gutter right-gutter";
-        rightGutter.textContent = row.right_line != null ? row.right_line : "";
-
-        // Right code cell
-        const rightCell = document.createElement("td");
-        rightCell.className = "diff-cell right-cell";
-        rightCell.textContent = row.right_content || "";
-
-        tr.appendChild(leftGutter);
-        tr.appendChild(leftCell);
-        tr.appendChild(rightGutter);
-        tr.appendChild(rightCell);
-        table.appendChild(tr);
-    });
-
-    if (diffLines.length > LIMIT) {
-        const more = document.createElement("tr");
-        more.innerHTML = `<td colspan="4" class="diff-more">... ${diffLines.length - LIMIT} more lines (truncated for performance)</td>`;
-        table.appendChild(more);
-    }
-
-    container.innerHTML = "";
-    container.appendChild(table);
-}
-
-function renderDiffStats(metrics, data) {
-    const bar = document.getElementById("diffStatsBar");
-    if (!bar) return;
-    const added = metrics.diff_lines_added ?? "—";
-    const removed = metrics.diff_lines_removed ?? "—";
-    const rules = metrics.rules_evaluated ?? "—";
-    bar.innerHTML = `
-        <span class="diff-stat added">+${added} lines added</span>
-        <span class="diff-stat removed">-${removed} lines removed</span>
-        <span class="diff-stat neutral">${rules} rules evaluated</span>
-    `;
-}
-
-function renderIssues(issues) {
-    const vulnList = document.getElementById("vulnList");
-    const depList = document.getElementById("depList");
-    vulnList.innerHTML = "";
-    depList.innerHTML = "";
-
-    const totalIssues = (issues.vulnerabilities?.length || 0) + (issues.deprecations?.length || 0);
-    document.getElementById("issueCountBadge").textContent = totalIssues;
-
-    (issues.vulnerabilities || []).forEach(v => {
-        vulnList.appendChild(buildIssueCard(v, "vuln"));
-    });
-
-    (issues.deprecations || []).forEach(d => {
-        depList.appendChild(buildIssueCard(d, "dep"));
-    });
-}
-
-function buildIssueCard(item, type) {
-    const card = document.createElement("div");
-    card.className = "issue-card";
-    const badgeClass = type === "vuln" ? "issue-cve-tag" : "badge-dep";
-    const label = item.cwe || item.id || (type === "vuln" ? "CVE" : "DEP");
-    const remLabel = type === "vuln" ? "Remediation" : "Modern standard";
-    const severityClass = {
-        CRITICAL: "sev-critical",
-        HIGH: "sev-high",
-        MEDIUM: "sev-medium",
-        LOW: "sev-low"
-    }[item.severity] || "";
-
-    card.innerHTML = `
-        <div class="issue-card-header">
-            <div class="issue-title-row">
-                <span class="issue-sev ${severityClass}">${item.severity}</span>
-                <span class="issue-card-title">${escHtml(item.title)}</span>
-            </div>
-            <span class="${badgeClass}">${escHtml(label)}</span>
-        </div>
-        <div class="issue-desc">${escHtml(item.description)}</div>
-        <div class="issue-remedy"><strong>${remLabel}:</strong> ${escHtml(item.remediation)}</div>
-    `;
-    return card;
-}
-
-function renderTests(testResults, generatedTestsCode) {
-    const grid = document.getElementById("testCasesGrid");
-    grid.innerHTML = "";
-
-    const passCount = testResults?.passed_count ?? 0;
-    const totalCount = testResults?.total_count ?? 0;
-    const totalMs = testResults?.total_duration_ms ?? 0;
-    const allPassed = testResults?.all_passed !== false;
-
-    document.getElementById("testCountBadge").textContent = `${passCount}/${totalCount}`;
-
-    // Summary banner
-    const bannerEl = document.querySelector(".sandbox-summary-tile .summary-status");
-    if (bannerEl) {
-        const statusBox = bannerEl.querySelector(".status-indicator-box");
-        if (statusBox) {
-            statusBox.className = `status-indicator-box ${allPassed ? "success" : "error"}`;
-            statusBox.textContent = allPassed ? "✔" : "✖";
-        }
-        const titleEl = bannerEl.querySelector(".summary-status-title");
-        if (titleEl) {
-            titleEl.textContent = allPassed
-                ? "Sandbox verification: All assertions passed"
-                : "Sandbox verification: Regression detected";
-        }
-        const metaLine = bannerEl.querySelector(".summary-meta-line");
-        if (metaLine) {
-            metaLine.innerHTML = `
-                <span>${passCount} passed</span><span>•</span>
-                <span>${totalMs}ms runtime</span><span>•</span>
-                <span>${totalCount} total assertions</span>
-            `;
-        }
-    }
-
-    (testResults?.test_cases || []).forEach(tc => {
-        const card = document.createElement("div");
-        card.className = `test-item-card ${tc.status === "PASSED" ? "passed" : "failed"}`;
-        card.innerHTML = `
-            <div class="test-name-tag">
-                <span class="test-icon">${tc.status === "PASSED" ? "✔" : "✖"}</span>
-                <span>${escHtml(tc.name)}</span>
-            </div>
-            <div class="test-meta">
-                <span class="test-id">${tc.id}</span>
-                <span class="test-duration">${tc.duration_ms}ms</span>
-            </div>
-            ${tc.detail ? `<div class="test-detail">${escHtml(tc.detail.substring(0, 100))}</div>` : ""}
-        `;
-        grid.appendChild(card);
-    });
-
-    document.getElementById("testCodeDisplay").textContent = generatedTestsCode || "// Tests generated by BobPulse";
-}
-
-function renderLogs(logs) {
-    const logStream = document.getElementById("logStream");
-    logStream.innerHTML = "";
-
-    logs.forEach((l, idx) => {
-        const row = document.createElement("div");
-        row.className = "log-item";
-        row.style.animationDelay = `${idx * 60}ms`;
-        row.innerHTML = `
-            <span class="log-num">${String(idx + 1).padStart(2, "0")}</span>
-            <span class="log-time">${escHtml(l.timestamp)}</span>
-            <span class="log-agent">${escHtml(l.agent)}</span>
-            <span class="log-message">${escHtml(l.detail)}</span>
-        `;
-        logStream.appendChild(row);
-    });
-}
-
-function renderReasoningPlan(plan) {
-    const container = document.getElementById("reasoningPlanList");
-    if (!container) return;
-    container.innerHTML = "";
-
-    if (!plan.length) {
-        container.innerHTML = `<div class="plan-empty">No issues detected — code meets modern standards.</div>`;
-        return;
-    }
-
-    plan.forEach(step => {
-        const el = document.createElement("div");
-        el.className = `plan-step plan-${step.type}`;
-        const impactClass = step.impact?.includes("CRITICAL") ? "sev-critical" :
-                            step.impact?.includes("HIGH") ? "sev-high" :
-                            step.impact?.includes("MEDIUM") ? "sev-medium" : "sev-low";
-        el.innerHTML = `
-            <div class="plan-step-header">
-                <span class="plan-priority">#${step.priority}</span>
-                <span class="plan-action">${escHtml(step.action)}</span>
-                <span class="plan-rule-id">${escHtml(step.rule_id)}</span>
-            </div>
-            <div class="plan-detail">${escHtml(step.detail)}</div>
-            <div class="plan-impact ${impactClass}">${escHtml(step.impact || "")}</div>
-        `;
-        container.appendChild(el);
-    });
-}
-
-function renderAstInfo(astInfo) {
-    const container = document.getElementById("astInfoPanel");
-    if (!container || !astInfo) return;
-    container.innerHTML = `
-        <div class="ast-stat"><span class="ast-label">Lines analyzed</span><span class="ast-val">${astInfo.num_lines ?? "—"}</span></div>
-        <div class="ast-stat"><span class="ast-label">Functions</span><span class="ast-val">${astInfo.num_functions ?? "—"}</span></div>
-        <div class="ast-stat"><span class="ast-label">Classes</span><span class="ast-val">${astInfo.num_classes ?? "—"}</span></div>
-        <div class="ast-stat"><span class="ast-label">Cyclomatic complexity</span><span class="ast-val">${astInfo.cyclomatic_complexity_estimate ?? "—"}</span></div>
-        <div class="ast-stat"><span class="ast-label">Type annotations</span><span class="ast-val ${astInfo.has_type_annotations ? "good" : "bad"}">${astInfo.has_type_annotations ? "Present" : "Absent"}</span></div>
-        <div class="ast-stat"><span class="ast-label">Docstrings</span><span class="ast-val ${astInfo.has_docstrings ? "good" : "bad"}">${astInfo.has_docstrings ? "Present" : "Absent"}</span></div>
-    `;
-}
-
-// ── Fallback (offline) Render ─────────────────────────────────────────────────
-function fallbackLocalRender(presetId) {
-    const preset = FALLBACK_PRESETS[presetId] || FALLBACK_PRESETS["python_legacy_service"];
-    const data = {
-        success: true,
-        elapsed_seconds: 1.82,
-        language: preset.language,
-        ast_info: { num_lines: preset.original_code.split("\n").length, num_functions: 2, num_classes: 1, cyclomatic_complexity_estimate: 7, has_type_annotations: false, has_docstrings: false },
-        bob_reasoning_plan: [
-            { priority: 1, type: "security_fix", rule_id: "PY-SEC-001", action: "[CWE-89] SQL injection via string interpolation", detail: "Replace with parameterized prepared statements.", impact: "CRITICAL — blocks enterprise deployment" },
-            { priority: 2, type: "security_fix", rule_id: "PY-SEC-002", action: "[CWE-327] Broken cryptographic algorithm (MD5)", detail: "Replace with hashlib.sha256() with random salt.", impact: "HIGH — GDPR & SOC2 compliance failure" },
-            { priority: 3, type: "deprecation_upgrade", rule_id: "PY-DEP-001", action: "Upgrade: Deprecated urllib2 (Python 2 only)", detail: "Migrate to requests.Session() with connection pooling.", impact: "HIGH — incompatible with Python 3" },
-        ],
-        metrics: {
-            initial_tech_debt: 85, residual_tech_debt: 4, debt_reduction_percent: "95%",
-            vulnerabilities_detected: 2, vulnerabilities_resolved: 2,
-            deprecations_updated: 2, rules_evaluated: 9,
-            test_pass_rate: "5/5", diff_lines_added: 28, diff_lines_removed: 15,
-            estimated_engineering_hours_saved: 13.5
-        },
-        issues: {
-            vulnerabilities: [
-                { id: "PY-SEC-001", cwe: "CWE-89", severity: "CRITICAL", title: "SQL injection via string interpolation", description: "Direct user input interpolated into SQL — allows full DB takeover.", remediation: "Use cursor.execute(sql, (param,)) parameterized statements." },
-                { id: "PY-SEC-002", cwe: "CWE-327", severity: "HIGH", title: "Broken cryptographic algorithm (MD5)", description: "MD5 is cryptographically broken — collision and preimage attacks.", remediation: "hashlib.sha256() with random salt per credential." }
-            ],
-            deprecations: [
-                { id: "PY-DEP-001", cwe: null, severity: "HIGH", title: "Deprecated urllib2 (Python 2 only)", description: "urllib2 was removed in Python 3 — lacks connection pooling.", remediation: "requests.Session() with explicit timeouts." },
-                { id: "PY-DEP-003", cwe: null, severity: "MEDIUM", title: "Bare except clause (error masking)", description: "Catching all exceptions hides bugs and swallows signals.", remediation: "Catch requests.RequestException with logging.error()." }
-            ]
-        },
-        original_code: preset.original_code,
-        modernized_code: preset.modernized_code,
-        generated_tests: preset.tests,
-        test_results: {
-            passed_count: 5, total_count: 5, all_passed: true, total_duration_ms: 63,
-            test_cases: [
-                { id: "SB-000", name: "Python syntax & compile validation", status: "PASSED", duration_ms: 3, detail: "Modernized code compiles without SyntaxError." },
-                { id: "SEC-01", name: "[CWE-89] SQL injection via string interpolation", status: "PASSED", duration_ms: 14, detail: "Parameterized queries neutralize injection payload." },
-                { id: "SEC-02", name: "[CWE-327] Broken cryptographic algorithm (MD5)", status: "PASSED", duration_ms: 22, detail: "SHA-256 digest length confirmed: 64 hex chars." },
-                { id: "DEP-01", name: "[PY-DEP-001] Deprecated urllib2 (Python 2 only)", status: "PASSED", duration_ms: 9, detail: "requests.Session() modern API contract confirmed." },
-                { id: "MOD-01", name: "Type annotation coverage (PEP 484)", status: "PASSED", duration_ms: 5, detail: "All public functions carry type annotations." }
-            ]
-        },
-        agent_logs: [
-            { stage: "Stage 1 — AST Ingestion", timestamp: "0.08s", agent: "BobPulse AST Inspector", detail: "Parsed 49 lines of PYTHON source code — 2 functions, 1 class, complexity ~7. Type annotations: absent." },
-            { stage: "Stage 2 — Vulnerability & Debt Scan", timestamp: "0.21s", agent: "BobPulse Security Sentinel", detail: "Evaluated 9 security rules. Flagged 2 CVE-level vulnerabilities and 2 deprecations. Tech debt: 85/100." },
-            { stage: "Stage 3 — IBM Bob 2.0 Decomposition", timestamp: "0.36s", agent: "IBM Bob 2.0 Agentic Reasoner", detail: "Generated 4-step prioritized refactoring plan: [CWE-89] SQL injection → [CWE-327] Broken crypto → Upgrade urllib2 (+1 more)." },
-            { stage: "Stage 4 — Granite Code Synthesis", timestamp: "0.52s", agent: "IBM Granite 20B Code", detail: "Synthesized modernized PYTHON implementation (58 lines, ~28 structural changes). 4 targeted regression tests generated." },
-            { stage: "Stage 5 — Self-Healing Test Sandbox", timestamp: "0.68s", agent: "BobPulse Test Arbiter", detail: "Executed 5 assertions in 53ms. Result: 5/5 PASSED. Zero regressions detected." }
-        ]
+function renderFindings(run) {
+    const buckets = run.issues;
+    const card = (finding) => {
+        const lines = (finding.lines || []).slice(0, 6).join(", ");
+        const snippets = (finding.snippets || [])
+            .map(
+                (s) =>
+                    `<div class="snippet"><span class="snippet-line">${s.line}</span><code>${escapeHtml(
+                        s.text
+                    )}</code></div>`
+            )
+            .join("");
+        return `<article class="audit-card sev-${finding.severity.toLowerCase()}">
+            <header class="audit-card-head">
+                <span class="carbon-tag tag-${sevTag(finding.severity)}">${finding.severity}</span>
+                <span class="rule-id">${escapeHtml(finding.cwe || finding.id)}</span>
+                ${statusChip(finding, run)}
+            </header>
+            <h5>${escapeHtml(finding.title)}</h5>
+            <p class="audit-desc">${escapeHtml(finding.description)}</p>
+            ${lines ? `<p class="audit-lines">Line${finding.lines.length > 1 ? "s" : ""} ${lines}</p>` : ""}
+            ${snippets}
+            <p class="audit-fix"><strong>Fix:</strong> ${escapeHtml(finding.remediation)}</p>
+        </article>`;
     };
-    currentModernData = data;
-    renderAnalysisResults(data);
-}
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-function setRunButtonState(btn, running) {
-    if (running) {
-        btn.classList.add("loading");
-        btn.innerHTML = `
-            <span class="btn-spinner"></span>
-            <span>Running BobPulse agent...</span>
-        `;
-    } else {
-        btn.classList.remove("loading");
-        btn.innerHTML = `
-            <svg class="carbon-btn-icon" viewBox="0 0 32 32" fill="currentColor">
-                <path d="M7 28a1 1 0 0 1-1-1V5a1 1 0 0 1 1.482-.876l20 11a1 1 0 0 1 0 1.752l-20 11A1 1 0 0 1 7 28z"/>
-            </svg>
-            <span>Run BobPulse agent</span>
-        `;
+    $("vulnList").innerHTML = buckets.vulnerabilities.length
+        ? buckets.vulnerabilities.map(card).join("")
+        : '<p class="muted pad">No security findings.</p>';
+    $("depList").innerHTML = buckets.deprecations.length
+        ? buckets.deprecations.map(card).join("")
+        : '<p class="muted pad">No deprecation or quality findings.</p>';
+
+    if (run.findings.introduced.length) {
+        $("vulnList").insertAdjacentHTML(
+            "afterbegin",
+            `<div class="callout callout-bad">
+                <strong>${run.findings.introduced.length} finding(s) introduced by this change.</strong>
+                ${run.findings.introduced.map((f) => escapeHtml(f.title)).join("; ")}
+             </div>`
+        );
     }
 }
 
-function updateLineCounts(original, modern) {
-    const left = original.split("\n").length;
-    const right = modern ? modern.split("\n").length : 0;
-    document.getElementById("leftLineCount").textContent = `${left} lines • Legacy / deprecated`;
-    document.getElementById("rightLineCount").textContent = right
-        ? `${right} lines • Verified clean` : "Awaiting analysis...";
+function sevTag(severity) {
+    return { CRITICAL: "error", HIGH: "error", MEDIUM: "warning", LOW: "info" }[severity] || "info";
 }
 
-function populatePRModal() {
-    const filename = document.getElementById("currentFileName").textContent;
-    const m = currentModernData?.metrics || {};
-    document.getElementById("prBranchInput").value = `bobpulse/modernize-${filename.replace(".", "-")}`;
-    document.getElementById("prTitleInput").value = `refactor(bobpulse): Modernize ${filename} — resolve security debt`;
+function renderPlan(plan) {
+    if (!plan.length) {
+        $("reasoningPlanList").innerHTML = '<p class="muted pad">Nothing to remediate.</p>';
+        return;
+    }
+    const statusChips = {
+        resolved: '<span class="chip chip-ok">resolved</span>',
+        unresolved: '<span class="chip chip-warn">not fixed automatically</span>',
+        not_attempted: '<span class="chip">manual</span>',
+        planned: '<span class="chip">planned</span>',
+    };
 
-    const vCount = m.vulnerabilities_resolved ?? "—";
-    const dCount = m.deprecations_updated ?? "—";
-    const debt = m.initial_tech_debt ?? "—";
-    const debtAfter = m.residual_tech_debt ?? "—";
-    const hrs = m.estimated_engineering_hours_saved ?? "—";
-
-    document.getElementById("prBodyTextarea").value = `## BobPulse Autonomous Modernization Report
-
-### Security & Quality Remediation Summary
-| Metric | Before | After |
-|--------|--------|-------|
-| Technical Debt | ${debt}% | ${debtAfter}% |
-| Vulnerabilities | ${vCount} critical | 0 (fully patched) |
-| Deprecations | ${dCount} APIs | 0 (all upgraded) |
-| Test Suite | — | 100% PASSED |
-| Engineering Hours Saved | — | ~${hrs} hrs |
-
-### Remediated Security CVEs
-${(currentModernData?.issues?.vulnerabilities || []).map(v => `- **[${v.cwe || v.id}] ${v.title}:** ${v.remediation}`).join("\n")}
-
-### Deprecated API Upgrades
-${(currentModernData?.issues?.deprecations || []).map(d => `- **[${d.id}] ${d.title}:** ${d.remediation}`).join("\n")}
-
-### Automated Verification
-All ${currentModernData?.test_results?.total_count || 0} assertions passed in the BobPulse Self-Healing Test Sandbox. Zero regressions detected.
-
----
-*Autonomously generated by **BobPulse v2.0** | Powered by **IBM Bob 2.0** & **IBM Granite 20B Code***`;
+    $("reasoningPlanList").innerHTML = plan
+        .map(
+            (step) => `<div class="plan-step status-${step.status}">
+            <div class="plan-step-num">${step.priority}</div>
+            <div class="plan-step-body">
+                <div class="plan-step-head">
+                    <span class="carbon-tag tag-${sevTag(step.severity)}">${step.severity}</span>
+                    <span class="rule-id">${escapeHtml(step.cwe || step.rule_id)}</span>
+                    ${statusChips[step.status] || ""}
+                </div>
+                <h5>${escapeHtml(step.action)}</h5>
+                <p>${escapeHtml(step.detail)}</p>
+                ${
+                    step.lines && step.lines.length
+                        ? `<p class="audit-lines">Line${step.lines.length > 1 ? "s" : ""} ${step.lines
+                              .slice(0, 6)
+                              .join(", ")}</p>`
+                        : ""
+                }
+            </div>
+        </div>`
+        )
+        .join("");
 }
 
-function downloadPatchFile() {
-    if (!currentModernData) return showToast("Run analysis first.", "warning");
-    const filename = document.getElementById("currentFileName").textContent;
-    const content = currentModernData.diff_unified || `--- a/${filename}\n+++ b/${filename}\n${currentModernData.modernized_code}`;
-    const blob = new Blob([content], { type: "text/x-diff" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = `bobpulse-${filename}.patch`;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    showToast(`Downloaded bobpulse-${filename}.patch`, "success");
+function renderVerification(run) {
+    const v = run.verification;
+    const icon = $("sandboxStatusIcon");
+    const ok = v.verdict === "clean";
+    icon.textContent = ok ? "✔" : v.verdict === "partial" ? "!" : "✕";
+    icon.className = `status-indicator-box ${ok ? "success" : v.verdict === "partial" ? "warning" : "error"}`;
+
+    $("sandboxStatusTitle").textContent = {
+        clean: "Verified — every detected finding is gone",
+        partial: "Sound output, some findings remain",
+        rejected: "Rejected — output was not accepted",
+    }[v.verdict];
+
+    const bits = [
+        `${v.passed_count} passed`,
+        `${v.failed_count} failed`,
+        `${v.skipped_count} skipped`,
+        `${v.duration_ms}ms`,
+        v.harness_executed ? "harness executed" : "harness NOT executed",
+    ];
+    if (v.execution_enabled) bits.push("code execution enabled");
+    $("sandboxMetaLine").innerHTML = bits.map((b) => `<span>${escapeHtml(b)}</span>`).join("<span>·</span>");
+
+    $("testCasesGrid").innerHTML = v.test_cases
+        .map((testCase) => {
+            const cls = testCase.status.toLowerCase();
+            const expected = testCase.expected ? '<span class="chip chip-warn">known-unresolved</span>' : "";
+            return `<div class="test-case case-${cls}">
+                <div class="test-case-head">
+                    <span class="case-status ${cls}">${testCase.status}</span>
+                    <span class="case-time">${testCase.duration_ms}ms</span>
+                    ${expected}
+                </div>
+                <div class="case-name">${escapeHtml(testCase.name)}</div>
+                <div class="case-detail">${escapeHtml(testCase.detail || "")}</div>
+            </div>`;
+        })
+        .join("");
+
+    const harness = v.generated_tests || "";
+    $("testCodeDisplay").textContent = harness || "No harness generated.";
+    $("testCodeLabel").textContent = v.harness_executed
+        ? "Generated regression harness (executed)"
+        : "Generated regression harness (not executed this run)";
+
+    if (run.native_tests) {
+        $("testCodeNote").textContent =
+            `A ${run.language} test skeleton was also generated for your own toolchain. ` +
+            "It is not executed here — this process has no runtime for it.";
+    }
+
+    if (window.hljs) {
+        try {
+            window.hljs.highlightElement($("testCodeDisplay"));
+        } catch (_) {
+            /* highlighting is cosmetic */
+        }
+    }
 }
 
-function escHtml(str) {
-    return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+function renderLog(logs) {
+    $("logStream").innerHTML = logs
+        .map(
+            (entry) => `<div class="log-line">
+            <span class="log-time">${escapeHtml(entry.timestamp)}</span>
+            <span class="log-stage">${escapeHtml(entry.stage)}</span>
+            <span class="log-agent">${escapeHtml(entry.agent)}</span>
+            <span class="log-detail">${escapeHtml(entry.detail)}</span>
+        </div>`
+        )
+        .join("");
 }
 
-function showToast(message, type = "success") {
-    const existing = document.querySelectorAll(".bp-toast");
-    existing.forEach(t => t.remove());
+// ── Export ───────────────────────────────────────────────────────────────────
 
-    const toast = document.createElement("div");
-    toast.className = `bp-toast bp-toast-${type}`;
-    toast.textContent = message;
-    document.body.appendChild(toast);
+function prRequestBody() {
+    const run = state.run;
+    return {
+        filename: run.filename,
+        diff_unified: run.diff_unified,
+        metrics: run.metrics,
+        findings: run.findings,
+        verification: run.verification,
+        synthesis: run.synthesis,
+        language: run.language,
+    };
+}
 
-    requestAnimationFrame(() => {
-        toast.classList.add("bp-toast-show");
-        setTimeout(() => {
-            toast.classList.remove("bp-toast-show");
-            setTimeout(() => toast.remove(), 300);
-        }, 3000);
-    });
+async function openPRModal() {
+    if (!state.run) return toast("Run an analysis first.", "error");
+    try {
+        const payload = await api("/api/export-pr", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(prRequestBody()),
+        });
+        $("prTitleInput").value = payload.title;
+        $("prBranchInput").value = payload.branch_from;
+        $("prBaseInput").value = payload.branch_to;
+        $("prBodyTextarea").value = payload.body_markdown;
+        const tag = $("prReadyTag");
+        tag.textContent = payload.ready_to_merge ? "verified" : "needs review";
+        tag.className = `carbon-tag ${payload.ready_to_merge ? "tag-success" : "tag-warning"}`;
+        $("prModal").classList.add("active");
+    } catch (err) {
+        toast(`Could not build the payload: ${err.message}`, "error");
+    }
+}
+
+async function downloadPatch() {
+    if (!state.run) return toast("Run an analysis first.", "error");
+    if (!state.run.diff_unified.trim()) return toast("No diff to export — nothing changed.", "error");
+
+    try {
+        const response = await fetch("/api/download-patch", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(prRequestBody()),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `bobpulse-${state.run.filename}.patch`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+        toast("Patch downloaded.");
+    } catch (err) {
+        toast(`Download failed: ${err.message}`, "error");
+    }
+}
+
+// ── Utilities ────────────────────────────────────────────────────────────────
+
+function escapeHtml(value) {
+    return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
+
+function copy(text, message) {
+    navigator.clipboard
+        .writeText(text)
+        .then(() => toast(message))
+        .catch(() => toast("Clipboard unavailable.", "error"));
+}
+
+function toast(message, kind = "success") {
+    const stack = $("toastStack");
+    const element = document.createElement("div");
+    element.className = `toast toast-${kind}`;
+    element.textContent = message;
+    stack.appendChild(element);
+    setTimeout(() => element.classList.add("visible"), 10);
+    setTimeout(() => {
+        element.classList.remove("visible");
+        setTimeout(() => element.remove(), 300);
+    }, 3600);
 }

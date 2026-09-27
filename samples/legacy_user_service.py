@@ -11,13 +11,13 @@ class UserService:
     def authenticate_user(self, username, password):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        
-        # CRITICAL VULNERABILITY: Raw SQL Injection (CWE-89)
+
+        # CRITICAL VULNERABILITY: Raw SQL Injection
         query = "SELECT id, username, role FROM users WHERE username = '%s' AND password = '%s'" % (username, md5.new(password).hexdigest())
         cursor.execute(query)
         user = cursor.fetchone()
         conn.close()
-        
+
         if user:
             return {"id": user[0], "username": user[1], "role": user[2]}
         return None

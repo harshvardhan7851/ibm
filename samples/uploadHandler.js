@@ -4,7 +4,7 @@ const fs = require('fs');
 // Legacy Express Route Handler
 function handleUserUpload(req, res) {
     const rawData = req.body.payload;
-    
+
     // VULNERABILITY: createCipher is deprecated and uses weak key derivation
     const cipher = crypto.createCipher('aes-128-cbc', 'legacy-app-secret');
     let encrypted = cipher.update(rawData, 'utf8', 'hex');

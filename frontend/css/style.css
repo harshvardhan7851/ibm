@@ -1218,7 +1218,7 @@ body.carbon-theme {
 }
 
 /* ==========================================================================
-   BobPulse v2.0 � New Component Styles (Hackathon Edition)
+   BobPulse v2.0 � New Component Styles (Hackathon Edition)
    ========================================================================== */
 
 /* -- Diff Stats Bar ------------------------------------------------------- */
@@ -1515,11 +1515,11 @@ body.carbon-theme {
     border-bottom: 1px solid #3a3018;
 }
 
-/* -- Step Divider � active fill ------------------------------------------- */
+/* -- Step Divider � active fill ------------------------------------------- */
 .carbon-step.completed + .step-divider { background-color: var(--color-accent-primary); }
 
 /* ==========================================================================
-   BobPulse v2.1 � Color-coded Diff Table + kbd shortcut styles
+   BobPulse v2.1 � Color-coded Diff Table + kbd shortcut styles
    ========================================================================== */
 
 /* -- Color-coded Diff Table (Fix #8) --------------------------------------- */
@@ -1611,4 +1611,534 @@ kbd {
 /* -- Live scan badge pulse -------------------------------------------------- */
 #issueCountBadge {
     transition: background 0.3s ease, transform 0.2s ease;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v3 additions — honest-state UI
+   Components added when the UI was reworked against the measured API:
+   status banner, debt breakdown table, finding cards with line numbers,
+   verification case grid, run log, toasts.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+.muted {
+    color: var(--color-text-muted);
+}
+
+.muted.small,
+.small {
+    font-size: 0.78rem;
+    line-height: 1.5;
+}
+
+.pad {
+    padding: 1rem;
+}
+
+/* ── Sidebar extras ──────────────────────────────────────────────────────── */
+
+.preset-empty {
+    padding: 0.6rem 0.75rem;
+    font-size: 0.78rem;
+    color: var(--color-text-muted);
+}
+
+.sidebar-hint {
+    margin: 0.6rem 0.25rem 0;
+    font-size: 0.72rem;
+    line-height: 1.45;
+    color: var(--color-text-muted);
+}
+
+/* ── Status banner ───────────────────────────────────────────────────────── */
+
+.synthesis-banner {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    padding: 0.7rem 1.5rem;
+    border-bottom: 1px solid var(--color-border-divider);
+    border-left: 3px solid var(--color-text-muted);
+    background: var(--color-surface);
+    font-size: 0.82rem;
+    line-height: 1.5;
+}
+
+.synthesis-banner .banner-tag {
+    flex-shrink: 0;
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.synthesis-banner .banner-text {
+    color: var(--color-text-secondary);
+}
+
+.synthesis-banner.banner-ok {
+    border-left-color: var(--color-success);
+}
+
+.synthesis-banner.banner-ok .banner-tag {
+    color: var(--color-success);
+}
+
+.synthesis-banner.banner-warn {
+    border-left-color: var(--color-warning);
+}
+
+.synthesis-banner.banner-warn .banner-tag {
+    color: var(--color-warning);
+}
+
+.synthesis-banner.banner-error {
+    border-left-color: var(--color-error);
+}
+
+.synthesis-banner.banner-error .banner-tag {
+    color: var(--color-error);
+}
+
+/* ── Status chips ────────────────────────────────────────────────────────── */
+
+.chip {
+    display: inline-block;
+    padding: 0.1rem 0.45rem;
+    border: 1px solid var(--color-border-subtle);
+    border-radius: var(--radius-xs, 2px);
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--color-text-muted);
+    white-space: nowrap;
+}
+
+.chip-ok {
+    border-color: var(--color-success);
+    color: var(--color-success);
+}
+
+.chip-warn {
+    border-color: var(--color-warning);
+    color: var(--color-warning);
+}
+
+.chip-bad {
+    border-color: var(--color-error);
+    color: var(--color-error);
+}
+
+/* ── Debt breakdown ──────────────────────────────────────────────────────── */
+
+.debt-breakdown {
+    margin: 0 0 0.75rem;
+    border: 1px solid var(--color-border-subtle);
+    background: var(--color-surface);
+}
+
+.debt-breakdown > summary {
+    padding: 0.55rem 0.9rem;
+    cursor: pointer;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    user-select: none;
+}
+
+.debt-breakdown > summary:hover {
+    color: var(--color-text-primary);
+}
+
+.debt-breakdown-body {
+    padding: 0 0.9rem 0.8rem;
+    overflow-x: auto;
+}
+
+.breakdown-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.76rem;
+}
+
+.breakdown-table th,
+.breakdown-table td {
+    padding: 0.35rem 0.5rem;
+    text-align: left;
+    border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.breakdown-table th {
+    font-weight: 600;
+    color: var(--color-text-muted);
+    text-transform: uppercase;
+    font-size: 0.66rem;
+    letter-spacing: 0.04em;
+}
+
+.breakdown-table td.num,
+.breakdown-table th.num {
+    text-align: right;
+    font-family: var(--font-mono);
+}
+
+.breakdown-table code {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--color-accent-primary);
+}
+
+.breakdown-table .row-introduced td {
+    background: rgba(255, 131, 137, 0.07);
+}
+
+/* ── Diff rows ───────────────────────────────────────────────────────────── */
+
+.diff-table-container .diff-row {
+    display: grid;
+    grid-template-columns: 3.25rem 1fr;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    line-height: 1.55;
+}
+
+.diff-table-container .diff-gutter {
+    padding-right: 0.6rem;
+    text-align: right;
+    color: var(--color-text-muted);
+    user-select: none;
+    border-right: 1px solid var(--color-border-subtle);
+}
+
+.diff-table-container .diff-code {
+    padding-left: 0.75rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.diff-table-container .diff-insert {
+    background: rgba(66, 190, 101, 0.13);
+}
+
+.diff-table-container .diff-replace {
+    background: rgba(241, 194, 27, 0.11);
+}
+
+.diff-table-container .diff-delete {
+    background: rgba(255, 131, 137, 0.11);
+}
+
+/* ── Finding cards ───────────────────────────────────────────────────────── */
+
+.audit-card {
+    margin-bottom: 0.75rem;
+    padding: 0.8rem 0.9rem;
+    border: 1px solid var(--color-border-subtle);
+    border-left: 3px solid var(--color-text-muted);
+    background: var(--color-surface-elevated);
+}
+
+.audit-card.sev-critical,
+.audit-card.sev-high {
+    border-left-color: var(--color-error);
+}
+
+.audit-card.sev-medium {
+    border-left-color: var(--color-warning);
+}
+
+.audit-card.sev-low {
+    border-left-color: var(--color-accent-primary);
+}
+
+.audit-card-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.45rem;
+    margin-bottom: 0.5rem;
+}
+
+.audit-card h5 {
+    margin: 0 0 0.35rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--color-text-primary);
+}
+
+.rule-id {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    color: var(--color-text-muted);
+}
+
+.audit-desc,
+.audit-fix {
+    margin: 0 0 0.4rem;
+    font-size: 0.79rem;
+    line-height: 1.55;
+    color: var(--color-text-secondary);
+}
+
+.audit-lines {
+    margin: 0 0 0.4rem;
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--color-text-muted);
+}
+
+.snippet {
+    display: grid;
+    grid-template-columns: 2.75rem 1fr;
+    gap: 0.5rem;
+    padding: 0.2rem 0;
+    font-family: var(--font-mono);
+    font-size: 0.73rem;
+}
+
+.snippet-line {
+    text-align: right;
+    color: var(--color-text-muted);
+}
+
+.snippet code {
+    overflow-x: auto;
+    white-space: pre;
+    color: var(--color-text-secondary);
+}
+
+.callout {
+    margin-bottom: 0.9rem;
+    padding: 0.65rem 0.8rem;
+    border-left: 3px solid var(--color-text-muted);
+    background: var(--color-surface);
+    font-size: 0.79rem;
+    line-height: 1.5;
+}
+
+.callout-bad {
+    border-left-color: var(--color-error);
+}
+
+/* ── Plan steps ──────────────────────────────────────────────────────────── */
+
+.plan-step {
+    display: grid;
+    grid-template-columns: 2.5rem 1fr;
+    gap: 0.75rem;
+    margin-bottom: 0.7rem;
+    padding: 0.75rem 0.9rem;
+    border: 1px solid var(--color-border-subtle);
+    border-left: 3px solid var(--color-text-muted);
+    background: var(--color-surface-elevated);
+}
+
+.plan-step.status-resolved {
+    border-left-color: var(--color-success);
+}
+
+.plan-step.status-unresolved {
+    border-left-color: var(--color-warning);
+}
+
+.plan-step-num {
+    font-family: var(--font-mono);
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--color-text-muted);
+}
+
+.plan-step-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.45rem;
+    margin-bottom: 0.4rem;
+}
+
+.plan-step-body h5 {
+    margin: 0 0 0.3rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+
+.plan-step-body p {
+    margin: 0 0 0.3rem;
+    font-size: 0.79rem;
+    line-height: 1.55;
+    color: var(--color-text-secondary);
+}
+
+/* ── Verification cases ──────────────────────────────────────────────────── */
+
+.test-case {
+    padding: 0.7rem 0.8rem;
+    border: 1px solid var(--color-border-subtle);
+    border-left: 3px solid var(--color-text-muted);
+    background: var(--color-surface-elevated);
+}
+
+.test-case.case-passed {
+    border-left-color: var(--color-success);
+}
+
+.test-case.case-failed {
+    border-left-color: var(--color-error);
+}
+
+.test-case.case-skipped {
+    border-left-color: var(--color-warning);
+}
+
+.test-case-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.4rem;
+}
+
+.case-status {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.case-status.passed {
+    color: var(--color-success);
+}
+
+.case-status.failed {
+    color: var(--color-error);
+}
+
+.case-status.skipped {
+    color: var(--color-warning);
+}
+
+.case-time {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    color: var(--color-text-muted);
+}
+
+.case-name {
+    margin-bottom: 0.25rem;
+    font-size: 0.82rem;
+    font-weight: 500;
+    color: var(--color-text-primary);
+}
+
+.case-detail {
+    font-size: 0.74rem;
+    line-height: 1.5;
+    color: var(--color-text-muted);
+    overflow-wrap: anywhere;
+}
+
+.status-indicator-box.warning {
+    color: var(--color-warning);
+    border-color: var(--color-warning);
+}
+
+.status-indicator-box.error {
+    color: var(--color-error);
+    border-color: var(--color-error);
+}
+
+/* ── Run log ─────────────────────────────────────────────────────────────── */
+
+.log-line {
+    display: grid;
+    grid-template-columns: 4.5rem 14rem 12rem 1fr;
+    gap: 0.75rem;
+    padding: 0.45rem 0.6rem;
+    border-bottom: 1px solid var(--color-border-subtle);
+    font-family: var(--font-mono);
+    font-size: 0.74rem;
+    line-height: 1.5;
+}
+
+.log-line .log-stage {
+    color: var(--color-accent-primary);
+}
+
+.log-line .log-detail {
+    color: var(--color-text-secondary);
+    overflow-wrap: anywhere;
+}
+
+@media (max-width: 1200px) {
+    .log-line {
+        grid-template-columns: 1fr;
+        gap: 0.15rem;
+    }
+}
+
+/* ── Footer note ─────────────────────────────────────────────────────────── */
+
+.footer-note {
+    font-size: 0.75rem;
+    color: var(--color-text-muted);
+}
+
+/* ── Run button busy state ───────────────────────────────────────────────── */
+
+.carbon-btn-primary.is-running,
+.carbon-btn-primary:disabled {
+    opacity: 0.65;
+    cursor: progress;
+}
+
+/* ── Toasts ──────────────────────────────────────────────────────────────── */
+
+.toast-stack {
+    position: fixed;
+    right: 1.25rem;
+    bottom: 1.25rem;
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    pointer-events: none;
+}
+
+.toast {
+    padding: 0.6rem 0.95rem;
+    border: 1px solid var(--color-border-subtle);
+    border-left: 3px solid var(--color-accent-primary);
+    background: var(--color-surface-elevated);
+    color: var(--color-text-primary);
+    font-size: 0.8rem;
+    opacity: 0;
+    transform: translateY(6px);
+    transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+.toast.visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.toast-success {
+    border-left-color: var(--color-success);
+}
+
+.toast-error {
+    border-left-color: var(--color-error);
 }

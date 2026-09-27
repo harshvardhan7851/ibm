@@ -20,9 +20,9 @@ public class OrderBatchProcessor {
                         Connection conn = DriverManager.getConnection("jdbc:legacy:db");
                         Statement stmt = conn.createStatement();
                         String dateStr = dateFormat.format(new Date());
-                        
+
                         stmt.executeUpdate("UPDATE orders SET processed_at = '" + dateStr + "' WHERE id = " + orderId);
-                        
+
                         // LEAK: Missing conn.close() / stmt.close() in finally block
                     } catch (Exception e) {
                         e.printStackTrace();

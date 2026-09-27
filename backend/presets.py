@@ -1,15 +1,46 @@
 """
-Preset enterprise legacy benchmarks for BobPulse.
-These demonstrate real-world scenarios across Python, Java, and TypeScript/Node.
+Example legacy sources.
+=======================
+
+These are *inputs only*.
+
+The previous version of this file also carried hand-written ``modernized_code``
+and ``tests`` for each entry, and the pipeline returned them verbatim whenever a
+``preset_id`` was supplied. That made the demo look flawless while ignoring
+whatever the user had actually typed. The golden outputs are gone: every example
+now goes through the same scan → plan → synthesise → verify path as any pasted
+snippet.
+
+``expected_rule_ids`` records which rules each example is meant to trigger. The
+test suite asserts on it, so a rule regression shows up as a failing test rather
+than a quietly emptier report.
 """
 
-PRESETS = {
+from __future__ import annotations
+
+from typing import Any, Dict
+
+EXAMPLES: Dict[str, Dict[str, Any]] = {
     "python_legacy_service": {
         "id": "python_legacy_service",
-        "name": "Python: Legacy User Service (SQL Injection & Deprecated APIs)",
+        "name": "Python 2 user service",
         "language": "python",
-        "category": "Security & Deprecation Fix",
-        "description": "Legacy Python code with raw SQL concatenation (CVE-level vulnerability), deprecated urllib2 library, mutable default args, and bare exception handling.",
+        "filename": "legacy_user_service.py",
+        "category": "Security & deprecation",
+        "description": (
+            "Python 2 era service: SQL built by string formatting, MD5 password "
+            "hashing, urllib2, a mutable default argument, a bare except and a "
+            "print statement. Does not even parse on Python 3."
+        ),
+        "expected_rule_ids": [
+            "PY-SEC-001",
+            "PY-SEC-002",
+            "PY-SEC-003",
+            "PY-DEP-001",
+            "PY-DEP-002",
+            "PY-QUAL-001",
+            "PY-QUAL-002",
+        ],
         "original_code": '''import urllib2
 import sqlite3
 import md5
@@ -23,13 +54,13 @@ class UserService:
     def authenticate_user(self, username, password):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        
+
         # CRITICAL VULNERABILITY: Raw SQL Injection
         query = "SELECT id, username, role FROM users WHERE username = '%s' AND password = '%s'" % (username, md5.new(password).hexdigest())
         cursor.execute(query)
         user = cursor.fetchone()
         conn.close()
-        
+
         if user:
             return {"id": user[0], "username": user[1], "role": user[2]}
         return None
@@ -47,97 +78,25 @@ class UserService:
             print "Failed to fetch profile for user: " + str(user_id)
             return None
 ''',
-        "modernized_code": '''from __future__ import annotations
-import hashlib
-import logging
-import sqlite3
-from dataclasses import dataclass
-from typing import Optional, Dict, Any
-import requests
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-logger = logging.getLogger("UserService")
-
-@dataclass(frozen=True)
-class UserProfile:
-    id: int
-    username: str
-    role: str
-
-class UserService:
-    """Modernized User Gateway utilizing parameterized queries, safe hashing, and requests."""
-
-    def __init__(self, db_path: str = "users.db", cache: Optional[Dict[int, str]] = None) -> None:
-        self.db_path = db_path
-        self.cache: Dict[int, str] = cache if cache is not None else {}
-
-    def _hash_password(self, password: str, salt: str = "bobpulse_salt_2026") -> str:
-        """Modern SHA-256 password hashing with salt (replaces deprecated MD5)."""
-        return hashlib.sha256((password + salt).encode("utf-8")).hexdigest()
-
-    def authenticate_user(self, username: str, password: str) -> Optional[UserProfile]:
-        """Secured against SQL Injection using parameterized prepared statements."""
-        hashed_pw = self._hash_password(password)
-        
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            # FIXED: Parameterized statement prevents SQL Injection completely
-            query = "SELECT id, username, role FROM users WHERE username = ? AND password = ?"
-            cursor.execute(query, (username, hashed_pw))
-            row = cursor.fetchone()
-
-        if row:
-            logger.info("User '%s' authenticated successfully", username)
-            return UserProfile(id=row[0], username=row[1], role=row[2])
-        
-        logger.warning("Authentication failed for username '%s'", username)
-        return None
-
-    def fetch_remote_profile(self, user_id: int) -> Optional[str]:
-        """Replaces deprecated urllib2 with modern requests session and timeout."""
-        if user_id in self.cache:
-            return self.cache[user_id]
-
-        url = f"https://api.secure-gateway.internal/profile?id={user_id}"
-        try:
-            with requests.Session() as session:
-                response = session.get(url, timeout=5.0)
-                response.raise_for_status()
-                data = response.text
-                self.cache[user_id] = data
-                return data
-        except requests.RequestException as exc:
-            logger.error("Network error while fetching profile for user_id %d: %s", user_id, str(exc))
-            return None
-''',
-        "tests": '''import pytest
-from unittest.mock import patch, MagicMock
-
-def test_sql_injection_resilience():
-    """Verify that malicious SQL payloads fail cleanly without executing."""
-    # Simulation: Parameterized query handles quotes safely
-    payload = "admin' OR '1'='1"
-    # Guaranteed safe parameter handling verified
-    assert "'" in payload
-    assert True
-
-def test_password_hashing():
-    """Verify SHA-256 replaces vulnerable MD5."""
-    import hashlib
-    h = hashlib.sha256(b"secret").hexdigest()
-    assert len(h) == 64
-
-def test_network_timeout_handling():
-    """Ensure requests properly enforces timeouts and avoids hanging."""
-    assert True
-'''
     },
     "java_concurrency_monolith": {
         "id": "java_concurrency_monolith",
-        "name": "Java: Legacy Concurrency & Date API to Java 21+",
+        "name": "Java 8 batch processor",
         "language": "java",
-        "category": "Enterprise Modernization",
-        "description": "Monolithic Java 8 processor with thread leaks, non-thread-safe SimpleDateFormat, unmanaged resource connections, and legacy iteration.",
+        "filename": "OrderBatchProcessor.java",
+        "category": "Concurrency & JDBC",
+        "description": (
+            "Java 8 batch job: a shared SimpleDateFormat field, one platform "
+            "thread per order, SQL assembled by concatenation, a leaked JDBC "
+            "connection and printStackTrace error handling."
+        ),
+        "expected_rule_ids": [
+            "JAVA-SEC-001",
+            "JAVA-SEC-002",
+            "JAVA-DEP-001",
+            "JAVA-QUAL-001",
+            "JAVA-QUAL-002",
+        ],
         "original_code": '''package com.enterprise.legacy;
 
 import java.sql.Connection;
@@ -160,9 +119,9 @@ public class OrderBatchProcessor {
                         Connection conn = DriverManager.getConnection("jdbc:legacy:db");
                         Statement stmt = conn.createStatement();
                         String dateStr = dateFormat.format(new Date());
-                        
+
                         stmt.executeUpdate("UPDATE orders SET processed_at = '" + dateStr + "' WHERE id = " + orderId);
-                        
+
                         // LEAK: Missing conn.close() / stmt.close() in finally block
                     } catch (Exception e) {
                         e.printStackTrace();
@@ -173,82 +132,26 @@ public class OrderBatchProcessor {
     }
 }
 ''',
-        "modernized_code": '''package com.enterprise.modern;
-
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.SQLException;
-import java.time.Instant;
-import java.time.format.DateTimeFormatter;
-import java.util.List;
-import java.util.concurrent.Executors;
-import java.util.logging.Logger;
-import javax.sql.DataSource;
-
-/**
- * Modernized Java 21+ Order Batch Processor
- * Upgraded with Virtual Threads, java.time (thread-safe), Try-With-Resources, and PreparedStatements.
- */
-public record OrderBatchProcessor(DataSource dataSource) {
-    private static final Logger LOGGER = Logger.getLogger(OrderBatchProcessor.class.getName());
-    private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ISO_INSTANT;
-
-    public void processOrders(List<String> orderIds) {
-        if (orderIds == null || orderIds.isEmpty()) return;
-
-        // Modern Java 21 Virtual Thread Per Task Executor
-        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
-            for (String orderId : orderIds) {
-                executor.submit(() -> processSingleOrder(orderId));
-            }
-        }
-    }
-
-    private void processSingleOrder(String orderId) {
-        final String query = "UPDATE orders SET processed_at = ? WHERE id = ?";
-        final String timestamp = FORMATTER.format(Instant.now());
-
-        // Try-With-Resources guarantees leak-free connection management
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(query)) {
-            
-            stmt.setString(1, timestamp);
-            stmt.setString(2, orderId);
-            stmt.executeUpdate();
-            LOGGER.info(() -> "Successfully processed order: " + orderId);
-
-        } catch (SQLException e) {
-            LOGGER.severe(() -> "Failed to update order " + orderId + ": " + e.getMessage());
-        }
-    }
-}
-''',
-        "tests": '''@Test
-public void testVirtualThreadExecution() {
-    // Verified: Executes orders concurrently without platform thread saturation
-    assertTrue(true);
-}
-
-@Test
-public void testThreadSafeDateFormatting() {
-    // Verified: java.time.Instant is immutable and thread-safe
-    assertNotNull(Instant.now());
-}
-'''
     },
     "node_callback_hell": {
         "id": "node_callback_hell",
-        "name": "Node.js: Callback Hell & Insecure Crypto to Async/Await",
+        "name": "Node.js upload handler",
         "language": "javascript",
-        "category": "Async & Cryptographic Overhaul",
-        "description": "Legacy Express route handler with deep callback nesting, deprecated crypto.createCipher, and unhandled promise rejections.",
+        "filename": "uploadHandler.js",
+        "category": "Async & cryptography",
+        "description": (
+            "Express handler using the deprecated crypto.createCipher (MD5 key "
+            "derivation, no IV) and two levels of error-first callbacks with no "
+            "structured error path."
+        ),
+        "expected_rule_ids": ["JS-SEC-001", "JS-DEP-001"],
         "original_code": '''const crypto = require('crypto');
 const fs = require('fs');
 
 // Legacy Express Route Handler
 function handleUserUpload(req, res) {
     const rawData = req.body.payload;
-    
+
     // VULNERABILITY: createCipher is deprecated and uses weak key derivation
     const cipher = crypto.createCipher('aes-128-cbc', 'legacy-app-secret');
     let encrypted = cipher.update(rawData, 'utf8', 'hex');
@@ -270,57 +173,95 @@ function handleUserUpload(req, res) {
 }
 module.exports = { handleUserUpload };
 ''',
-        "modernized_code": '''import { promises as fs } from 'node:fs';
-import crypto from 'node:crypto';
+    },
+    "php_legacy_admin": {
+        "id": "php_legacy_admin",
+        "name": "PHP 5 admin lookup",
+        "language": "php",
+        "filename": "admin_lookup.php",
+        "category": "Injection & credentials",
+        "description": (
+            "PHP 5 script using the removed mysql_* extension, a request "
+            "superglobal spliced straight into SQL, md5 password hashing and a "
+            "shell call built from a variable."
+        ),
+        "expected_rule_ids": ["PHP-SEC-001", "PHP-SEC-002", "PHP-SEC-003", "PHP-DEP-001"],
+        "original_code": '''<?php
+// Legacy admin tooling - PHP 5.x
+$link = mysql_connect("localhost", "root", "root");
+mysql_select_db("app", $link);
 
-const ALGORITHM = 'aes-256-gcm';
-const IV_LENGTH = 16;
-const KEY = crypto.scryptSync(process.env.APP_SECRET || 'fallback-secure-salt-2026', 'salt', 32);
+$username = $_GET['user'];
+$result = mysql_query("SELECT id, email, role FROM users WHERE username = '" . $username . "'");
+$row = mysql_fetch_assoc($result);
 
-/**
- * Modernized Secure Async File Handler (ESM, AES-GCM, Promises)
- */
-export async function handleUserUpload(req, res, next) {
-    try {
-        const rawData = req.body?.payload;
-        if (!rawData) {
-            return res.status(400).json({ error: 'Missing required payload' });
-        }
-
-        // Upgraded to Authenticated Encryption (AES-256-GCM) with random IV
-        const iv = crypto.randomBytes(IV_LENGTH);
-        const cipher = crypto.createCipheriv(ALGORITHM, KEY, iv);
-        
-        let encrypted = cipher.update(rawData, 'utf8', 'hex');
-        encrypted += cipher.final('hex');
-        const authTag = cipher.getAuthTag().toString('hex');
-
-        const fileRecord = JSON.stringify({ iv: iv.toString('hex'), authTag, data: encrypted });
-        const filePath = './secure_vault.json';
-
-        // Clean promise-based IO with automatic resource management
-        await fs.writeFile(filePath, fileRecord, { mode: 0o600 });
-        const stat = await fs.stat(filePath);
-
-        return res.status(200).json({
-            status: 'success',
-            algorithm: ALGORITHM,
-            bytesEncrypted: stat.size,
-            timestamp: new Date().toISOString()
-        });
-    } catch (err) {
-        return next(err); // Centralized error handling
-    }
+$hashed = md5($_POST['password']);
+if ($row && $hashed === $row['password_hash']) {
+    $logfile = $_GET['log'];
+    // Dumps the requested log straight through a shell
+    system("cat /var/log/app/" . $logfile);
+    echo "Welcome " . $row['email'];
+} else {
+    echo "Access denied";
 }
 ''',
-        "tests": '''describe('Secure Upload Modernization', () => {
-    it('should use AES-256-GCM with authenticated tags', () => {
-        expect(true).toBe(true);
-    });
-    it('should prevent unhandled rejections using async/await pattern', async () => {
-        expect(true).toBe(true);
+    },
+    "typescript_unsafe_api": {
+        "id": "typescript_unsafe_api",
+        "name": "TypeScript API route",
+        "language": "typescript",
+        "filename": "userRoute.ts",
+        "category": "Injection & type safety",
+        "description": (
+            "TypeScript route that builds SQL with a template literal, evaluates "
+            "a filter expression with eval(), leans on `any`, and leaves a promise "
+            "chain without a rejection handler."
+        ),
+        "expected_rule_ids": [
+            "JS-SEC-002",
+            "JS-SEC-003",
+            "JS-QUAL-001",
+            "JS-QUAL-002",
+            "TS-QUAL-001",
+        ],
+        "original_code": '''import { Router } from 'express';
+import { db } from './db';
+
+const router = Router();
+
+router.get('/users/:id', (req: any, res: any) => {
+  const id = req.params.id;
+
+  // Template literal straight into SQL
+  db.query(`SELECT id, email, role FROM users WHERE id = ${id}`)
+    .then((rows: any) => {
+      var filter = req.query.filter;
+      // Arbitrary expression evaluated against the result set
+      const matched = rows.filter((r: any) => eval(filter));
+      res.json({ users: matched });
     });
 });
-'''
-    }
+
+export default router;
+''',
+    },
 }
+
+#: Backwards-compatible alias for the previous module-level name.
+PRESETS = EXAMPLES
+
+
+def example_summaries() -> list[Dict[str, Any]]:
+    """Metadata plus source, for /api/examples. No golden outputs to leak."""
+    return [
+        {
+            "id": example["id"],
+            "name": example["name"],
+            "language": example["language"],
+            "filename": example["filename"],
+            "category": example["category"],
+            "description": example["description"],
+            "original_code": example["original_code"],
+        }
+        for example in EXAMPLES.values()
+    ]

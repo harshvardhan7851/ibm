@@ -1,0 +1,10 @@
+# Development and test dependencies.
+#
+#     pip install -r requirements-dev.txt
+#     pytest                  # full suite (~2-3 min, runs real pytest subprocesses)
+#     pytest -m "not slow"    # fast subset (~3s)
+
+-r requirements.txt
+
+# Required by fastapi.testclient / starlette.testclient.
+httpx>=0.27,<1.0
